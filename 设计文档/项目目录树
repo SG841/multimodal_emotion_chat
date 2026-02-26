@@ -1,0 +1,26 @@
+Multimodal_Emotion_Chat/
+├── .vscode/                  # 编辑器配置文件 (存放 Python 解析器路径、调试配置等)
+│   └── settings.json
+├── .gitignore                # Git 忽略文件 (防止把几十G的模型和缓存推送到远程仓库)
+├── requirements.txt          # 核心依赖包列表 (方便在 AutoDL 部署)
+├── README.md                 # 项目说明文档 (为了毕设答辩和后续整理)
+│
+├── app.py                    # 🟢 [模块 6] 交互界面：主程序入口，运行 Gradio
+├── config.py                 # 🟡 [模块 1/多线程调度] 全局配置文件：定义 GLOBAL_STATE 共享内存字典和模型路径
+│
+├── modules/                  # 核心算法模块文件夹
+│   ├── __init__.py
+│   ├── vision.py             # 👁️ [模块 1] 视觉感知：加载 ViT，处理摄像头视频流，写入全局状态
+│   ├── audio.py              # 👂 [模块 2] 听觉感知：加载 Whisper 和 Wav2Vec2，处理录音文件
+│   ├── fusion.py             # 🧠 [模块 3] 融合决策：读取视听特征，执行“基于置信度的规则融合”
+│   ├── llm.py                # 🗣️ [模块 4] 对话生成：加载 Qwen2.5，拼接 Prompt 并生成文本
+│   └── tts.py                # 👄 [模块 5] 语音合成：调用 Edge-TTS，将文本转为 .mp3
+│
+├── utils/                    # 工具类文件夹
+│   ├── __init__.py
+│   └── monitor.py            # 📊 [模块 7] 状态监控：记录耗时、显存占用、打印融合决策日志
+│
+└── assets/                   # 资源与缓存文件夹 (Git需忽略里面的文件)
+    ├── temp_audio/           # 存放前端录音生成的临时 .wav 文件
+    ├── output_tts/           # 存放 Edge-TTS 生成的临时 .mp3 回复文件
+    └── test_media/           # 存放用来离线测试的图片和音频片段
