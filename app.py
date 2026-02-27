@@ -33,6 +33,7 @@ class EmotionChatInterface:
         self.visual_confidence = 0.0
         self.chat_history = []
         self.system_logs = []
+        self._frame_count_internal = 0  # 内部帧计数器（整数）
 
         # 创建界面
         self.create_interface()
@@ -205,7 +206,8 @@ class EmotionChatInterface:
         """绑定界面事件"""
 
         # 视频流处理 - 实时情绪识别
-        self.video_input.change(
+        # Gradio 6.7+ 使用 stream 事件处理 streaming 视频流，实现实时检测
+        self.video_input.stream(
             fn=self.process_video_stream,
             inputs=[self.video_input],
             outputs=[
@@ -322,12 +324,15 @@ class EmotionChatInterface:
 
         log_display = "\n".join(self.system_logs[-10:])
 
+        # 增加帧计数
+        self._frame_count_internal += 1
+
         return (
             video_frame,
             emotion,
             f"{confidence:.2%}",
             emotion_bars_html,
-            int(getattr(self, 'frame_count', 0)) + 1,
+            self._frame_count_internal,
             time.strftime("%H:%M:%S"),
             log_display
         )
@@ -516,7 +521,11 @@ class EmotionChatInterface:
             primary_hue="indigo",
             secondary_hue="blue",
         )
-        self.interface.launch(theme=theme, css=self._get_custom_css(), **kwargs)
+        self.interface.launch(
+            theme=theme,
+            css=self._get_custom_css(),
+            **kwargs
+        )
 
 
 def main():
@@ -526,10 +535,10 @@ def main():
         server_name="0.0.0.0",
         server_port=7860,
         share=False,
-        show_error=True,
-        quiet=False
+        show_error=True
     )
 
 
 if __name__ == "__main__":
     main()
+ 

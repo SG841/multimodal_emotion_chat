@@ -94,17 +94,16 @@ class VisionEmotionDetector:
             return "Neutral", 0.0, {}
 
         # 确保图像是 RGB 格式
-        if len(image.shape) == 3 and image.shape[2] == 3:
-            # OpenCV 默认是 BGR，需要转为 RGB
-            if image.dtype == np.uint8:
-                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        # 注意：从 Gradio 传入的图像已经是 RGB 格式，无需转换
+        # 只有当输入是 BGR 格式时才需要转换
+        pass
 
         # 转换为 PIL Image
         pil_image = Image.fromarray(image)
 
         # 情绪识别推理
         try:
-            results = self.classifier(pil_image)
+            results = self.classifier(pil_image, top_k=7)
 
             # 提取最高概率的情绪
             top_result = results[0]
