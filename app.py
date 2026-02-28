@@ -7,7 +7,6 @@ import gradio as gr
 import numpy as np
 from typing import Optional, Tuple
 import time
-import cv2
 import sys
 import os
 
@@ -16,7 +15,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # 导入视觉模块
 try:
-    from modules.vision import predict_emotion, draw_emotion_label
+    from modules.vision import predict_emotion
     VISION_AVAILABLE = True
 except ImportError as e:
     print(f"视觉模块导入失败: {e}")
@@ -34,6 +33,7 @@ class EmotionChatInterface:
         self.chat_history = []
         self.system_logs = []
         self._frame_count_internal = 0  # 内部帧计数器（整数）
+        self.last_emotion_probs = {}   # 保存最后一次的情绪概率
 
         # 创建界面
         self.create_interface()
@@ -303,19 +303,6 @@ class EmotionChatInterface:
         # 生成情绪条HTML
         emotion_bars_html = self._get_emotion_bars(emotion_probs)
 
-        # 在视频帧上绘制情绪标签（使用OpenCV）
-        try:
-            if VISION_AVAILABLE and confidence > 0:
-                # 转换 RGB -> BGR 用于 OpenCV 绘图
-                bgr_frame = cv2.cvtColor(video_frame, cv2.COLOR_RGB2BGR)
-                # 绘制情绪标签
-                annotated_frame = draw_emotion_label(bgr_frame, emotion, confidence, emotion_probs)
-                # 转换 BGR -> RGB 用于 Gradio 显示
-                video_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
-        except Exception as e:
-            print(f"绘制标签错误: {e}")
-            pass
-
         # 更新日志
         log_entry = f"[{time.strftime('%H:%M:%S')}] 视觉识别: {emotion} (置信度: {confidence})"
         self.system_logs.append(log_entry)
@@ -457,10 +444,12 @@ class EmotionChatInterface:
 
     def _get_empty_emotion_bars(self) -> str:
         """获取空的情绪条HTML"""
-        emotions = ["Happy", "Sad", "Angry", "Neutral", "Surprise", "Fear"]
+        # 使用当前已知情绪，如果没有则使用默认列表
+        emotions = list(self.last_emotion_probs.keys()) if hasattr(self, 'last_emotion_probs') and self.last_emotion_probs else ["Happy", "Sad", "Angry", "Neutral", "Surprise", "Fear"]
         colors = ["#4CAF50", "#2196F3", "#F44336", "#9E9E9E", "#FF9800", "#9C27B0"]
         html = "<div style='margin: 10px 0;'>"
-        for emotion, color in zip(emotions, colors):
+        for i, emotion in enumerate(emotions):
+            color = colors[i % len(colors)]
             html += f"""
             <div style='display: flex; align-items: center; margin: 5px 0;'>
                 <span style='width: 80px; font-size: 12px;'>{emotion}</span>
@@ -483,18 +472,28 @@ class EmotionChatInterface:
         Returns:
             HTML格式的条形图
         """
-        emotions = ["Happy", "Sad", "Angry", "Neutral", "Surprise", "Fear"]
+        # 如果为空，返回空条形图
+        if not emotion_probs:
+            return self._get_empty_emotion_bars()
+
+        # 保存最后一次的 emotion_probs 用于后续显示
+        self.last_emotion_probs = emotion_probs
+
+        # 按概率排序，取前6个情绪
+        sorted_emotions = sorted(emotion_probs.items(), key=lambda x: x[1], reverse=True)[:6]
+
         colors = ["#4CAF50", "#2196F3", "#F44336", "#9E9E9E", "#FF9800", "#9C27B0"]
         html = "<div style='margin: 10px 0;'>"
-        for emotion, color in zip(emotions, colors):
-            prob = emotion_probs.get(emotion, 0) * 100
+        for i, (emotion, prob) in enumerate(sorted_emotions):
+            color = colors[i % len(colors)]
+            prob_percent = prob * 100
             html += f"""
             <div style='display: flex; align-items: center; margin: 5px 0;'>
                 <span style='width: 80px; font-size: 12px;'>{emotion}</span>
                 <div style='flex: 1; height: 20px; background: #e0e0e0; border-radius: 10px; margin-left: 10px;'>
-                    <div style='width: {prob}%; height: 100%; background: {color}; border-radius: 10px; transition: width 0.3s;'></div>
+                    <div style='width: {prob_percent}%; height: 100%; background: {color}; border-radius: 10px; transition: width 0.3s;'></div>
                 </div>
-                <span style='width: 40px; text-align: right; font-size: 12px;'>{prob:.0f}%</span>
+                <span style='width: 40px; text-align: right; font-size: 12px;'>{prob_percent:.0f}%</span>
             </div>
             """
         html += "</div>"

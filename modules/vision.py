@@ -3,7 +3,6 @@
 基于 Vision Transformer (ViT) 进行人脸表情情绪识别
 """
 
-import cv2
 import numpy as np
 from PIL import Image
 from transformers import pipeline
@@ -131,167 +130,6 @@ class VisionEmotionDetector:
             print(f"[视觉模块] 推理错误: {e}")
             return self.last_emotion, self.last_confidence, self.last_emotion_probs
 
-    def draw_emotion_label(
-        self,
-        image: np.ndarray,
-        emotion: str,
-        confidence: float,
-        emotion_probs: Dict[str, float] = None
-    ) -> np.ndarray:
-        """
-        在图像上绘制情绪标签
-
-        Args:
-            image: 输入图像 (BGR格式)
-            emotion: 情绪标签
-            confidence: 置信度
-            emotion_probs: 情绪概率分布
-
-        Returns:
-            绘制标签后的图像 (BGR格式)
-        """
-        # 创建图像副本
-        result = image.copy()
-
-        # 绘制情绪标签背景
-        label_text = f"Emotion: {emotion} ({confidence:.1%})"
-
-        # 字体设置
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 0.7
-        thickness = 2
-
-        # 计算文本大小
-        (text_width, text_height), baseline = cv2.getTextSize(
-            label_text, font, font_scale, thickness
-        )
-
-        # 绘制背景框
-        margin = 10
-        bg_width = text_width + 2 * margin
-        bg_height = text_height + 2 * margin + baseline
-
-        # 根据情绪选择颜色
-        emotion_colors = {
-            "Happy": (0, 255, 0),      # 绿色
-            "Sad": (255, 0, 0),        # 红色
-            "Angry": (0, 0, 255),      # 蓝色
-            "Neutral": (128, 128, 128),  # 灰色
-            "Surprise": (0, 165, 255),  # 橙色
-            "Fear": (255, 0, 255),     # 紫色
-            "Disgust": (0, 255, 255),  # 青色
-        }
-        color = emotion_colors.get(emotion, (128, 128, 128))
-
-        # 绘制半透明背景
-        overlay = result.copy()
-        cv2.rectangle(
-            overlay,
-            (10, 10),
-            (10 + bg_width, 10 + bg_height),
-            color,
-            -1
-        )
-        result = cv2.addWeighted(result, 0.7, overlay, 0.3, 0)
-
-        # 绘制边框
-        cv2.rectangle(
-            result,
-            (10, 10),
-            (10 + bg_width, 10 + bg_height),
-            color,
-            2
-        )
-
-        # 绘制文本
-        cv2.putText(
-            result,
-            label_text,
-            (10 + margin, 10 + margin + text_height),
-            font,
-            font_scale,
-            (255, 255, 255),
-            thickness,
-            cv2.LINE_AA
-        )
-
-        # 如果提供了情绪概率，绘制进度条
-        if emotion_probs:
-            self._draw_emotion_bars(result, emotion_probs, 10 + bg_height + 10)
-
-        return result
-
-    def _draw_emotion_bars(
-        self,
-        image: np.ndarray,
-        emotion_probs: Dict[str, float],
-        start_y: int,
-        bar_height: int = 20
-    ):
-        """
-        绘制情绪概率条形图
-
-        Args:
-            image: 输入图像
-            emotion_probs: 情绪概率字典
-            start_y: 起始Y坐标
-            bar_height: 条形高度
-        """
-        emotion_colors = {
-            "Happy": (0, 255, 0),
-            "Sad": (255, 0, 0),
-            "Angry": (0, 0, 255),
-            "Neutral": (128, 128, 128),
-            "Surprise": (0, 165, 255),
-            "Fear": (255, 0, 255),
-            "Disgust": (0, 255, 255),
-        }
-
-        # 取前5个概率最高的情绪
-        sorted_emotions = sorted(
-            emotion_probs.items(),
-            key=lambda x: x[1],
-            reverse=True
-        )[:5]
-
-        for i, (emotion, prob) in enumerate(sorted_emotions):
-            y = start_y + i * (bar_height + 5)
-
-            # 绘制背景条
-            bar_width = 200
-            cv2.rectangle(
-                image,
-                (10, y),
-                (10 + bar_width, y + bar_height),
-                (50, 50, 50),
-                -1
-            )
-
-            # 绘制概率条
-            prob_width = int(bar_width * prob)
-            color = emotion_colors.get(emotion, (128, 128, 128))
-            cv2.rectangle(
-                image,
-                (10, y),
-                (10 + prob_width, y + bar_height),
-                color,
-                -1
-            )
-
-            # 绘制标签
-            label = f"{emotion}: {prob:.1%}"
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            cv2.putText(
-                image,
-                label,
-                (10 + bar_width + 10, y + bar_height - 5),
-                font,
-                0.4,
-                (255, 255, 255),
-                1,
-                cv2.LINE_AA
-            )
-
     def get_top_emotions(self, top_k: int = 3) -> list:
         """
         获取概率最高的前K个情绪
@@ -342,28 +180,6 @@ def predict_emotion(image: np.ndarray, skip_frames: int = None):
     """
     detector = get_detector()
     return detector.predict_emotion(image, skip_frames)
-
-
-def draw_emotion_label(
-    image: np.ndarray,
-    emotion: str,
-    confidence: float,
-    emotion_probs: Dict[str, float] = None
-):
-    """
-    在图像上绘制情绪标签（便捷函数）
-
-    Args:
-        image: 输入图像
-        emotion: 情绪标签
-        confidence: 置信度
-        emotion_probs: 情绪概率分布
-
-    Returns:
-        绘制标签后的图像
-    """
-    detector = get_detector()
-    return detector.draw_emotion_label(image, emotion, confidence, emotion_probs)
 
 
 if __name__ == "__main__":
