@@ -34,8 +34,8 @@ class VisionEmotionDetector:
             model_name: 模型名称，默认使用配置中的模型
             device: 设备，None表示自动检测
         """
-        self.model_name = model_name or VISION_MODEL
-        self.device = device or VISION_DEVICE
+        self.model_name = VISION_MODEL
+        self.device = VISION_DEVICE
         self.classifier = None
         self.frame_count = 0
         self.last_emotion = "Neutral"
