@@ -3,8 +3,8 @@ gradio>=4.0.0
 numpy>=1.24.0
 
 # 视觉感知模块
-torch>=2.2.0
-torchvision>=0.17.0
+torch==2.1.0
+torchvision>=0.15.0
 transformers>=4.30.0
 opencv-python>=4.8.0
 Pillow>=10.0.0
