@@ -11,7 +11,7 @@ from typing import Dict, Optional
 
 # 视觉模块配置
 VISION_MODEL = "/root/multimodal_emotion_chat/models/facial_emotions"
-VISION_SKIP_FRAMES = 5  # 每5帧抽1帧
+VISION_SKIP_FRAMES = 1  # 每1帧抽1帧
 VISION_DEVICE = None  # None表示自动检测GPU，或指定为0表示使用第一个GPU
 
 # 听觉模块配置
