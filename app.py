@@ -63,7 +63,8 @@ class EmotionChatInterface:
                         streaming=True,
                         label="实时视频流",
                         elem_id="video-stream",
-                        height=400
+                        height=400,
+                        width=640
                     )
 
                     # 情绪状态显示卡片
@@ -508,8 +509,27 @@ class EmotionChatInterface:
             text-align: center !important;
             padding: 10px !important;
         }
+        /* 固定视频流容器大小 */
         #video-stream {
             border-radius: 10px !important;
+        }
+        #video-stream .preview-container {
+            width: 640px !important;
+            height: 400px !important;
+            min-width: 640px !important;
+            min-height: 400px !important;
+            max-width: 640px !important;
+            max-height: 400px !important;
+        }
+        #video-stream video,
+        #video-stream img,
+        #video-stream canvas {
+            width: 640px !important;
+            height: 400px !important;
+            object-fit: cover !important;
+        }
+        #video-stream button {
+            min-width: auto !important;
         }
         """
 
