@@ -1,11 +1,15 @@
 """
 视觉感知模块
 基于 Vision Transformer (ViT) 进行人脸表情情绪识别
+优化：抛弃 pipeline，使用原生 torch + FP16 + GPU预处理，显著提升 L4S 性能
 """
 
 import numpy as np
 from PIL import Image
-from transformers import pipeline
+from transformers import AutoImageProcessor, AutoModelForImageClassification
+import torch
+import torch.nn.functional as F
+from torchvision import transforms
 import time
 from typing import Dict, Tuple, Optional
 
@@ -23,7 +27,7 @@ from config import (
 
 
 class VisionEmotionDetector:
-    """视觉情绪识别器"""
+    """视觉情绪识别器 - 原生 torch + FP16 + GPU预处理 优化版"""
 
     def __init__(self, model_name: str = None, device: str = None):
         """
@@ -34,28 +38,83 @@ class VisionEmotionDetector:
             device: 设备，None表示自动检测
         """
         self.model_name = VISION_MODEL
-        self.device = VISION_DEVICE
-        self.classifier = None
+        self.device = torch.device(VISION_DEVICE if VISION_DEVICE else "cuda:0" if torch.cuda.is_available() else "cpu")
+        self.model = None
+        self.processor = None
+        self.gpu_transform = None  # GPU预处理transform
         self.frame_count = 0
         self.last_emotion = "Neutral"
         self.last_confidence = 0.0
         self.last_emotion_probs = {}
 
-        print(f"[视觉模块] 正在加载模型: {self.model_name}")
+        print(f"[视觉模块] 正在加载模型: {self.model_name} on {self.device}")
+        print(f"[视觉模块] 使用 FP16 推理模式 + GPU预处理")
         self._load_model()
         print(f"[视觉模块] 模型加载完成")
 
     def _load_model(self):
-        """加载预训练模型"""
+        """直接使用 torch 加载模型，启用 FP16 + GPU预处理"""
         try:
-            self.classifier = pipeline(
-                "image-classification",
-                model=self.model_name,
-                device=self.device
-            )
+            # 直接加载模型和处理器，不使用 pipeline
+            self.processor = AutoImageProcessor.from_pretrained(self.model_name)
+
+            # 尝试加载模型，不指定 attn_implementation（模型可能不支持）
+            try:
+                self.model = AutoModelForImageClassification.from_pretrained(
+                    self.model_name,
+                    torch_dtype=torch.float16  # FP16 半精度推理
+                )
+                print(f"[视觉模块] FP16 推理模式已启用")
+            except Exception as model_err:
+                # 如果 FP16 加载失败，回退到 FP32
+                print(f"[视觉模块] FP16 加载失败，回退到 FP32: {model_err}")
+                self.model = AutoModelForImageClassification.from_pretrained(self.model_name)
+
+            # 将模型移动到目标设备并设置为评估模式
+            self.model = self.model.to(self.device)
+            self.model.eval()
+
+            # 禁用梯度计算，减少显存占用
+            torch.set_grad_enabled(False)
+
+            # 创建GPU预处理transform（替代CPU的processor）
+            self._create_gpu_transform()
+
+            print(f"[视觉模块] 模型已加载到 {self.device}")
+
         except Exception as e:
             print(f"[视觉模块] 模型加载失败: {e}")
             raise
+
+    def _create_gpu_transform(self):
+        """
+        创建GPU预处理transform，避免CPU瓶颈
+        从processor.config提取预处理参数
+        """
+        # 从processor获取预处理参数
+        if hasattr(self.processor, 'image_mean') and hasattr(self.processor, 'image_std'):
+            mean = self.processor.image_mean
+            std = self.processor.image_std
+        else:
+            # 默认ImageNet归一化
+            mean = [0.485, 0.456, 0.406]
+            std = [0.229, 0.224, 0.225]
+
+        # 获取目标尺寸
+        if hasattr(self.processor, 'size'):
+            size = self.processor.size.get('shortest_edge', 224)
+        else:
+            size = 224
+
+        # 创建GPU预处理pipeline - 针对tensor的transform
+        # 注意：transform需要先归一化到[0,1]然后才做其他处理
+        self.gpu_transform = transforms.Compose([
+            transforms.Resize(size),  # GPU加速的resize
+            transforms.CenterCrop(size),  # 居中裁剪
+            transforms.Normalize(mean=mean, std=std)  # GPU加速的归一化
+        ])
+
+        print(f"[视觉模块] GPU预处理transform已创建 (size={size})")
 
     def predict_emotion(
         self,
@@ -63,7 +122,7 @@ class VisionEmotionDetector:
         skip_frames: int = None
     ) -> Tuple[str, float, Dict[str, float]]:
         """
-        预测图像中的情绪
+        预测图像中的情绪 - 原生 torch + FP16 + GPU预处理
 
         Args:
             image: 输入图像 (numpy array, RGB格式)
@@ -92,25 +151,44 @@ class VisionEmotionDetector:
         if image is None:
             return "Neutral", 0.0, {}
 
-        # 确保图像是 RGB 格式
-        # 注意：从 Gradio 传入的图像已经是 RGB 格式，无需转换
-        # 只有当输入是 BGR 格式时才需要转换
-        pass
-
-        # 转换为 PIL Image
-        pil_image = Image.fromarray(image)
-
-        # 情绪识别推理
+        # 情绪识别推理 - 原生 torch + 真正的GPU预处理
         try:
-            results = self.classifier(pil_image, top_k=7)
+            with torch.inference_mode():  # 比 torch.no_grad() 更高效
+                # 1. 瞬间搬运到 GPU (H, W, C) -> (C, H, W)
+                # 直接从 numpy 转为 tensor，不经过 PIL，不经过 CPU 缩放
+                img_tensor = torch.from_numpy(image).to(self.device).permute(2, 0, 1)
 
-            # 提取最高概率的情绪
-            top_result = results[0]
-            emotion = top_result["label"]
-            confidence = top_result["score"]
+                # 2. 转换为半精度并归一化到 [0, 1]
+                # L4S 处理这种张量计算快如闪电
+                img_tensor = img_tensor.half() / 255.0
 
-            # 构建情绪概率字典
-            emotion_probs = {r["label"]: r["score"] for r in results}
+                # 3. 真正的 GPU 预处理：Resize, Crop, Normalize
+                # 这步是在 GPU 上并行的
+                img_tensor = self.gpu_transform(img_tensor).unsqueeze(0)
+
+                # 4. 推理
+                outputs = self.model(pixel_values=img_tensor)
+
+                # 5. 后处理 (直接在 GPU 上算 Softmax)
+                logits = outputs.logits
+                probs = F.softmax(logits, dim=-1)[0]
+
+                # 获取 top-7
+                top_k = min(7, len(probs))
+                top_probs, top_indices = torch.topk(probs, top_k)
+
+                # 转换为 CPU numpy 数组
+                top_probs = top_probs.cpu().numpy()
+                top_indices = top_indices.cpu().numpy()
+
+                # 获取标签
+                id2label = self.model.config.id2label
+                top_labels = [id2label[idx] for idx in top_indices]
+
+                # 构建结果
+                emotion = top_labels[0]
+                confidence = float(top_probs[0])
+                emotion_probs = {label: float(prob) for label, prob in zip(top_labels, top_probs)}
 
             # 更新缓存
             self.last_emotion = emotion

@@ -63,7 +63,8 @@ class EmotionChatInterface:
                         streaming=True,
                         label="实时视频流",
                         elem_id="video-stream",
-                        height=400
+                        height=400,
+                        width=640
                     )
 
                     # 情绪状态显示卡片
@@ -206,12 +207,12 @@ class EmotionChatInterface:
         """绑定界面事件"""
 
         # 视频流处理 - 实时情绪识别
-        # Gradio 6.7+ 使用 stream 事件处理 streaming 视频流，实现实时检测
+        # 关键优化：不从outputs返回video_input，避免图像往返开销
+        # 前端video_input已经在streaming显示，只需更新文本UI
         self.video_input.stream(
             fn=self.process_video_stream,
             inputs=[self.video_input],
             outputs=[
-                self.video_input,
                 self.emotion_display,
                 self.confidence_display,
                 self.emotion_bars,
@@ -259,19 +260,20 @@ class EmotionChatInterface:
         self,
         video_frame: Optional[np.ndarray]
     ) -> Tuple[
-        np.ndarray, str, str, str, int, str, str
+        str, str, str, int, str, str
     ]:
         """
         处理视频流 - 情绪识别
+        优化：不返回video_frame，避免图像往返开销
 
         Args:
             video_frame: 视频帧 (numpy array, RGB)
 
         Returns:
-            处理后的视频帧、情绪标签、置信度、情绪条HTML、帧计数、更新时间、日志
+            情绪标签、置信度、情绪条HTML、帧计数、更新时间、日志
         """
         if video_frame is None:
-            return None, "等待中...", "--", self._get_empty_emotion_bars(), 0, "--", "等待视频流..."
+            return "等待中...", "--", self._get_empty_emotion_bars(), 0, "--", "等待视频流..."
 
         # 调用视觉模块进行情绪识别
         try:
@@ -315,7 +317,6 @@ class EmotionChatInterface:
         self._frame_count_internal += 1
 
         return (
-            video_frame,
             emotion,
             f"{confidence:.2%}",
             emotion_bars_html,
@@ -508,8 +509,27 @@ class EmotionChatInterface:
             text-align: center !important;
             padding: 10px !important;
         }
+        /* 固定视频流容器大小 */
         #video-stream {
             border-radius: 10px !important;
+        }
+        #video-stream .preview-container {
+            width: 640px !important;
+            height: 400px !important;
+            min-width: 640px !important;
+            min-height: 400px !important;
+            max-width: 640px !important;
+            max-height: 400px !important;
+        }
+        #video-stream video,
+        #video-stream img,
+        #video-stream canvas {
+            width: 640px !important;
+            height: 400px !important;
+            object-fit: cover !important;
+        }
+        #video-stream button {
+            min-width: auto !important;
         }
         """
 
@@ -532,7 +552,7 @@ def main():
     app = EmotionChatInterface()
     app.launch(
         server_name="0.0.0.0",
-        server_port=7860,
+        server_port=7863,
         share=False,
         show_error=True
     )
