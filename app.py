@@ -21,6 +21,14 @@ except ImportError as e:
     print(f"视觉模块导入失败: {e}")
     VISION_AVAILABLE = False
 
+# 导入音频模块
+try:
+    from modules.audio import transcribe_audio
+    AUDIO_AVAILABLE = True
+except ImportError as e:
+    print(f"音频模块导入失败: {e}")
+    AUDIO_AVAILABLE = False
+
 # 导入监控模块
 try:
     from utils.monitor import monitor
@@ -128,7 +136,7 @@ class EmotionChatInterface:
                     with gr.Row():
                         self.audio_input = gr.Audio(
                             sources=["microphone"],
-                            type="filepath",
+                            type="filepath",  # 返回文件路径
                             label="语音输入"
                         )
                         self.recording_status = gr.Textbox(
@@ -365,12 +373,21 @@ class EmotionChatInterface:
 
         start_time = time.time()
 
-        # TODO: 调用听觉模块进行语音识别和情感识别
-        # from modules.audio import transcribe_audio, recognize_speech_emotion
-        # user_text, audio_emotion, audio_confidence = ...
+        # 语音转录
+        if AUDIO_AVAILABLE:
+            try:
+                user_text = transcribe_audio(audio_path)
+            except Exception as e:
+                print(f"语音转录失败: {e}")
+                user_text = "[语音识别失败]"
+        else:
+            user_text = "[音频模块未加载]"
 
-        # 模拟数据（实际使用时删除）
-        user_text = "我今天感觉不太好"
+        # TODO: 调用语音情感识别
+        # from modules.audio import recognize_speech_emotion
+        # audio_emotion, audio_confidence = recognize_speech_emotion(audio_path)
+
+        # 模拟情感识别结果（待实现）
         audio_emotion = "Sad"
         audio_confidence = 0.85
 
