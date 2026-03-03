@@ -21,6 +21,14 @@ except ImportError as e:
     print(f"视觉模块导入失败: {e}")
     VISION_AVAILABLE = False
 
+# 导入监控模块
+try:
+    from utils.monitor import monitor
+    MONITOR_AVAILABLE = True
+except ImportError as e:
+    print(f"监控模块导入失败: {e}")
+    MONITOR_AVAILABLE = False
+
 
 class EmotionChatInterface:
     """共情对话系统交互界面"""
@@ -189,13 +197,8 @@ class EmotionChatInterface:
 
                     # 性能指标
                     with gr.Row():
-                        self.inference_time = gr.Textbox(
-                            label="总推理耗时",
-                            value="-- ms",
-                            interactive=False
-                        )
                         self.gpu_memory = gr.Textbox(
-                            label="显存占用",
+                            label="GPU 显存占用",
                             value="-- MB",
                             interactive=False
                         )
@@ -218,7 +221,8 @@ class EmotionChatInterface:
                 self.emotion_bars,
                 self.frame_count,
                 self.last_update,
-                self.log_display
+                self.log_display,
+                self.gpu_memory
             ],
             show_progress="hidden"
         )
@@ -235,8 +239,8 @@ class EmotionChatInterface:
                 self.visual_weight,
                 self.audio_weight,
                 self.log_display,
-                self.inference_time,
-                self.recording_status
+                self.recording_status,
+                self.gpu_memory
             ]
         )
 
@@ -260,7 +264,7 @@ class EmotionChatInterface:
         self,
         video_frame: Optional[np.ndarray]
     ) -> Tuple[
-        str, str, str, int, str, str
+        str, str, str, int, str, str, str
     ]:
         """
         处理视频流 - 情绪识别
@@ -273,7 +277,8 @@ class EmotionChatInterface:
             情绪标签、置信度、情绪条HTML、帧计数、更新时间、日志
         """
         if video_frame is None:
-            return "等待中...", "--", self._get_empty_emotion_bars(), 0, "--", "等待视频流..."
+            gpu_mem = monitor.get_resource_status().get("gpu_mem", "--") if MONITOR_AVAILABLE else "--"
+            return "等待中...", "--", self._get_empty_emotion_bars(), 0, "--", "等待视频流...", gpu_mem
 
         # 调用视觉模块进行情绪识别
         try:
@@ -316,13 +321,17 @@ class EmotionChatInterface:
         # 增加帧计数
         self._frame_count_internal += 1
 
+        # 获取 GPU 显存
+        gpu_mem = monitor.get_resource_status().get("gpu_mem", "--") if MONITOR_AVAILABLE else "--"
+
         return (
             emotion,
             f"{confidence:.2%}",
             emotion_bars_html,
             self._frame_count_internal,
             time.strftime("%H:%M:%S"),
-            log_display
+            log_display,
+            gpu_mem
         )
 
     def process_dialogue(
@@ -341,6 +350,7 @@ class EmotionChatInterface:
             对话历史、识别文本、音频输出、融合决策、视觉权重、听觉权重、日志、耗时、状态
         """
         if not audio_path:
+            gpu_mem = monitor.get_resource_status().get("gpu_mem", "--") if MONITOR_AVAILABLE else "--"
             return (
                 self.chat_history,
                 current_text,
@@ -349,8 +359,8 @@ class EmotionChatInterface:
                 "--",
                 "--",
                 "\n".join(self.system_logs[-10:]),
-                "-- ms",
-                "请先点击录音"
+                "请先点击录音",
+                gpu_mem
             )
 
         start_time = time.time()
@@ -374,9 +384,18 @@ class EmotionChatInterface:
         audio_weight = f"{audio_confidence * 100:.0f}%"
 
         # 更新融合显示
-        fusion_text = f"视觉情绪: {self.current_emotion} ({self.visual_confidence:.0%})\n"
-        fusion_text += f"听觉情绪: {audio_emotion} ({audio_confidence:.0%})\n"
-        fusion_text += f"最终决策: {final_emotion}"
+        if MONITOR_AVAILABLE:
+            fusion_text = monitor.format_fusion_report(
+                v_emo=self.current_emotion,
+                v_conf=self.visual_confidence,
+                a_emo=audio_emotion,
+                a_conf=audio_confidence,
+                final=final_emotion
+            )
+        else:
+            fusion_text = f"视觉情绪: {self.current_emotion} ({self.visual_confidence:.0%})\n"
+            fusion_text += f"听觉情绪: {audio_emotion} ({audio_confidence:.0%})\n"
+            fusion_text += f"最终决策: {final_emotion}"
 
         # TODO: 调用LLM生成回复
         # from modules.llm import generate_empathetic_response
@@ -395,8 +414,8 @@ class EmotionChatInterface:
         # 更新对话历史
         self.chat_history.append([user_text, response_text])
 
-        # 计算耗时
-        inference_time = (time.time() - start_time) * 1000
+        # 获取 GPU 显存
+        gpu_mem = monitor.get_resource_status().get("gpu_mem", "--") if MONITOR_AVAILABLE else "--"
 
         # 更新日志
         log_entries = [
@@ -404,8 +423,7 @@ class EmotionChatInterface:
             f"[{time.strftime('%H:%M:%S')}] ASR识别: {user_text}",
             f"[{time.strftime('%H:%M:%S')}] 语音情感: {audio_emotion} ({audio_confidence:.0%})",
             f"[{time.strftime('%H:%M:%S')}] 融合决策: {final_emotion}",
-            f"[{time.strftime('%H:%M:%S')}] LLM生成完成",
-            f"[{time.strftime('%H:%M:%S')}] 总耗时: {inference_time:.0f}ms"
+            f"[{time.strftime('%H:%M:%S')}] LLM生成完成"
         ]
         self.system_logs.extend(log_entries)
         if len(self.system_logs) > 50:
@@ -419,8 +437,8 @@ class EmotionChatInterface:
             visual_weight,
             audio_weight,
             "\n".join(self.system_logs[-10:]),
-            f"{inference_time:.0f} ms",
-            "处理完成"
+            "处理完成",
+            gpu_mem
         )
 
     def clear_chat(self):
