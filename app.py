@@ -293,18 +293,9 @@ class EmotionChatInterface:
             if VISION_AVAILABLE:
                 emotion, confidence, emotion_probs = predict_emotion(video_frame, skip_frames=5)
             else:
-                # 视觉模块不可用时使用模拟数据
-                import random
-                emotions = ["Happy", "Sad", "Angry", "Neutral", "Surprise", "Fear"]
-                emotion = random.choice(emotions)
-                confidence = round(random.uniform(0.6, 0.95), 2)
-                emotion_probs = {
-                    "Happy": 0.1, "Sad": 0.1, "Angry": 0.1,
-                    "Neutral": 0.1, "Surprise": 0.1, "Fear": 0.1
-                }
-                emotion_probs[emotion] = confidence
-                for k in emotion_probs:
-                    emotion_probs[k] = round(emotion_probs[k], 2)
+                emotion = "Neutral"
+                confidence = 0.0
+                emotion_probs = {}
         except Exception as e:
             print(f"视觉识别错误: {e}")
             emotion = "Neutral"
@@ -428,8 +419,9 @@ class EmotionChatInterface:
         # 模拟音频路径（实际使用时删除）
         audio_output_path = None
 
-        # 更新对话历史
-        self.chat_history.append([user_text, response_text])
+        # 更新对话历史 (Gradio 6.0+ 格式: 使用 role 和 content)
+        self.chat_history.append({"role": "user", "content": user_text})
+        self.chat_history.append({"role": "assistant", "content": response_text})
 
         # 获取 GPU 显存
         gpu_mem = monitor.get_resource_status().get("gpu_mem", "--") if MONITOR_AVAILABLE else "--"
@@ -472,8 +464,10 @@ class EmotionChatInterface:
     def show_example(self):
         """显示示例对话"""
         example_history = [
-            ["我最近工作压力很大", "听起来你最近承受了很大的工作压力，能具体说说是什么让你感到压力吗？"],
-            ["老板总是给我加任务", "老板不断给你增加任务确实会让人感到疲惫和焦虑。你有没有尝试过和老板沟通这个问题？"],
+            {"role": "user", "content": "我最近工作压力很大"},
+            {"role": "assistant", "content": "听起来你最近承受了很大的工作压力，能具体说说是什么让你感到压力吗？"},
+            {"role": "user", "content": "老板总是给我加任务"},
+            {"role": "assistant", "content": "老板不断给你增加任务确实会让人感到疲惫和焦虑。你有没有尝试过和老板沟通这个问题？"},
         ]
         self.chat_history = example_history
         self.chat_display.value = example_history

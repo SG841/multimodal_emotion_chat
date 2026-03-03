@@ -8,16 +8,15 @@ import time
 from typing import Optional
 from faster_whisper import WhisperModel
 
-# 设置镜像环境变量
-os.environ["HF_ENDPOINT"] = "http://hfmirror.mas.zetyun.cn:8082"
-
 # 全局模型实例（懒加载）
 _model: Optional[WhisperModel] = None
 _model_config = {
-    "model_size": "large-v3",
+    "model_path": os.path.join(
+        os.path.dirname(__file__),
+        "../models/faster-whisper/models--Systran--faster-whisper-large-v3/snapshots/edaa852ec7e145841d8ffdb056a99866b5f0a478"
+    ),  # 本地模型路径
     "device": "cuda",
-    "compute_type": "float16",
-    "download_root": os.path.join(os.path.dirname(__file__), "../models/faster-whisper")
+    "compute_type": "float16"
 }
 
 
@@ -31,14 +30,13 @@ def _get_model() -> WhisperModel:
     global _model
 
     if _model is None:
-        print(f"🚀 加载 Whisper 模型: {_model_config['model_size']}")
-        print(f"📁 模型路径: {os.path.abspath(_model_config['download_root'])}")
+        print(f"🚀 加载本地 Whisper 模型")
+        print(f"📁 模型路径: {os.path.abspath(_model_config['model_path'])}")
 
         _model = WhisperModel(
-            _model_config["model_size"],
+            _model_config["model_path"],
             device=_model_config["device"],
-            compute_type=_model_config["compute_type"],
-            download_root=_model_config["download_root"]
+            compute_type=_model_config["compute_type"]
         )
 
         print("✅ Whisper 模型加载完成")
