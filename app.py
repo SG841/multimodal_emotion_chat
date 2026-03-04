@@ -9,6 +9,8 @@ from typing import Optional, Tuple
 import time
 import sys
 import os
+import asyncio
+import collections
 
 # 添加项目路径
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -51,6 +53,12 @@ class EmotionChatInterface:
         self._frame_count_internal = 0  # 内部帧计数器（整数）
         self.last_emotion_probs = {}   # 保存最后一次的情绪概率
 
+        # === 新增状态管理 ===
+        self.is_recording = False          # 正在录音标记
+        self.is_asr_processing = False     # 正在 ASR 推理标记（算力避让锁）
+        self.recording_emotion_buffer = [] # 录音期间的情感缓冲区
+        self.last_proc_time = 0          # 【频率控制】记录上次处理时间戳
+
         # 创建界面
         self.create_interface()
 
@@ -73,14 +81,15 @@ class EmotionChatInterface:
                 with gr.Column(scale=3):
                     gr.Markdown("### 👁️ 视觉感知区")
 
-                    # 摄像头视频流
+                    # 摄像头视频流 - 强制低分辨率采集 (320x240 减少带宽)
+                    # 注意: height/width 参数会影响 getUserMedia 约束
                     self.video_input = gr.Image(
                         sources=["webcam"],
                         streaming=True,
                         label="实时视频流",
                         elem_id="video-stream",
-                        height=400,
-                        width=640
+                        height=240,   # 强制采集高度 240
+                        width=320     # 强制采集宽度 320
                     )
 
                     # 情绪状态显示卡片
@@ -215,11 +224,9 @@ class EmotionChatInterface:
             self._bind_events()
 
     def _bind_events(self):
-        """绑定界面事件"""
+        """绑定界面事件 - 开启并发与异步通道"""
 
-        # 视频流处理 - 实时情绪识别
-        # 关键优化：不从outputs返回video_input，避免图像往返开销
-        # 前端video_input已经在streaming显示，只需更新文本UI
+        # 视频流：高频预测 + 录音期间数据累积
         self.video_input.stream(
             fn=self.process_video_stream,
             inputs=[self.video_input],
@@ -232,10 +239,18 @@ class EmotionChatInterface:
                 self.log_display,
                 self.gpu_memory
             ],
-            show_progress="hidden"
+            show_progress="hidden",
+            concurrency_limit=1,  # 单线程循环，防止队列积压
+            queue=False
         )
 
-        # 录音结束触发对话处理
+        # 新增：录音开始事件
+        self.audio_input.start_recording(
+            fn=self.handle_recording_start,
+            outputs=[self.recording_status]
+        )
+
+        # 录音结束：触发 ASR + 时序融合
         self.audio_input.stop_recording(
             fn=self.process_dialogue,
             inputs=[self.audio_input, self.recognized_text],
@@ -249,7 +264,9 @@ class EmotionChatInterface:
                 self.log_display,
                 self.recording_status,
                 self.gpu_memory
-            ]
+            ],
+            concurrency_limit=1,  # ASR 独占一个高优先级通道
+            queue=True
         )
 
         # 清空对话按钮
@@ -268,7 +285,13 @@ class EmotionChatInterface:
             fn=self.show_example
         )
 
-    def process_video_stream(
+    def handle_recording_start(self):
+        """录音开始：初始化缓冲区"""
+        self.is_recording = True
+        self.recording_emotion_buffer = []  # 清空之前的记录
+        return "正在录音：系统正在同步分析您的全段表情..."
+
+    async def process_video_stream(
         self,
         video_frame: Optional[np.ndarray]
     ) -> Tuple[
@@ -288,23 +311,42 @@ class EmotionChatInterface:
             gpu_mem = monitor.get_resource_status().get("gpu_mem", "--") if MONITOR_AVAILABLE else "--"
             return "等待中...", "--", self._get_empty_emotion_bars(), 0, "--", "等待视频流...", gpu_mem
 
+        # 【频率控制】强制每 150ms 最多处理一帧（约 6-7 FPS），减少 CPU 负担
+        curr_time = time.time()
+        if curr_time - self.last_proc_time < 0.15:
+            return (gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip())
+        self.last_proc_time = curr_time
+
+        # 【优先级调度】ASR 运行期间，视觉模块停止向 GPU 发送新任务，防止抢占 ASR 的 WebSocket 管道
+        if self.is_asr_processing:
+            return (
+                self.current_emotion,
+                f"{self.visual_confidence:.2%}",
+                self._get_emotion_bars(self.last_emotion_probs),
+                self._frame_count_internal,
+                time.strftime("%H:%M:%S"),
+                "GPU 算力优先分配给 ASR 推理...",
+                "--"
+            )
+
         # 调用视觉模块进行情绪识别
         try:
             if VISION_AVAILABLE:
-                emotion, confidence, emotion_probs = predict_emotion(video_frame, skip_frames=5)
-            else:
-                emotion = "Neutral"
-                confidence = 0.0
-                emotion_probs = {}
-        except Exception as e:
-            print(f"视觉识别错误: {e}")
-            emotion = "Neutral"
-            confidence = 0.0
-            emotion_probs = {}
+                # 【优化】直接传 numpy 数组，torch.from_numpy 在 vision.py 中直接接管显存，避免 CPU 拷贝
+                emotion, confidence, probs = await asyncio.to_thread(predict_emotion, video_frame, skip_frames=1)
 
-        # 更新状态
-        self.current_emotion = emotion
-        self.visual_confidence = confidence
+                # 更新实时状态
+                self.current_emotion, self.visual_confidence, self.last_emotion_probs = emotion, confidence, probs
+                emotion_probs = probs
+
+                # 【核心功能】如果在录音，则把每一帧结果存入缓冲区
+                if self.is_recording:
+                    self.recording_emotion_buffer.append(emotion)
+        except Exception as e:
+            print(f"Vision Error: {e}")
+            emotion = self.current_emotion
+            confidence = self.visual_confidence
+            emotion_probs = self.last_emotion_probs
 
         # 生成情绪条HTML
         emotion_bars_html = self._get_emotion_bars(emotion_probs)
@@ -333,13 +375,13 @@ class EmotionChatInterface:
             gpu_mem
         )
 
-    def process_dialogue(
+    async def process_dialogue(
         self,
         audio_path: Optional[str],
         current_text: str
     ) -> Tuple:
         """
-        处理用户对话 - 多模态融合 + LLM生成 + TTS播放
+        对话处理：执行 ASR 并融合录音全段的视觉特征
 
         Args:
             audio_path: 录音文件路径
@@ -358,97 +400,89 @@ class EmotionChatInterface:
                 "--",
                 "--",
                 "\n".join(self.system_logs[-10:]),
-                "请先点击录音",
+                "请先录音",
                 gpu_mem
             )
 
-        start_time = time.time()
+        try:
+            self.is_asr_processing = True  # 开启算力保护锁
+            self.is_recording = False      # 标记录音结束
 
-        # 语音转录
-        if AUDIO_AVAILABLE:
-            try:
-                user_text = transcribe_audio(audio_path)
-            except Exception as e:
-                print(f"语音转录失败: {e}")
-                user_text = "[语音识别失败]"
-        else:
-            user_text = "[音频模块未加载]"
+            # 1. 执行真实的 ASR 推理 (派发到独立线程)
+            if AUDIO_AVAILABLE:
+                user_text = await asyncio.to_thread(transcribe_audio, audio_path)
+            else:
+                user_text = "[音频模块未加载]"
 
-        # TODO: 调用语音情感识别
-        # from modules.audio import recognize_speech_emotion
-        # audio_emotion, audio_confidence = recognize_speech_emotion(audio_path)
+            # 2. 【全程视觉融合】计算录音全过程出现频率最高的情绪（众数过滤噪声）
+            if self.recording_emotion_buffer:
+                # 统计出现次数最多的表情作为最终视觉决策
+                visual_decision = collections.Counter(self.recording_emotion_buffer).most_common(1)[0][0]
+                fusion_info = f"融合成功：分析了录音期间 {len(self.recording_emotion_buffer)} 帧表情，主要情绪：{visual_decision}"
+            else:
+                visual_decision = self.current_emotion
+                fusion_info = "未捕获到录音期间的视觉数据，采用末帧。"
 
-        # 模拟情感识别结果（待实现）
-        audio_emotion = "Sad"
-        audio_confidence = 0.85
+            # 3. 模拟融合逻辑（暂时保持占位数据，之后接入 SER）
+            audio_emotion = "Sad"  # 占位
+            audio_confidence = 0.85  # 占位
 
-        # TODO: 调用融合模块
-        # from modules.fusion import fuse_emotions
-        # final_emotion, visual_weight, audio_weight = ...
+            # 融合决策改用录音期间的综合结果 visual_decision
+            final_emotion = audio_emotion if audio_confidence > 0.8 else visual_decision
+            visual_weight = f"{(1 - audio_confidence) * 100:.0f}%"
+            audio_weight = f"{audio_confidence * 100:.0f}%"
 
-        # 模拟融合结果
-        final_emotion = audio_emotion if audio_confidence > 0.8 else self.current_emotion
-        visual_weight = f"{(1 - audio_confidence) * 100:.0f}%"
-        audio_weight = f"{audio_confidence * 100:.0f}%"
+            # 更新融合显示
+            if MONITOR_AVAILABLE:
+                fusion_text = monitor.format_fusion_report(
+                    v_emo=visual_decision,
+                    v_conf=self.visual_confidence,
+                    a_emo=audio_emotion,
+                    a_conf=audio_confidence,
+                    final=final_emotion
+                )
+            else:
+                fusion_text = f"时序融合决策: {final_emotion}\n"
+                fusion_text += f"录音期间视觉: {visual_decision}\n"
+                fusion_text += f"音频情感: {audio_emotion} ({audio_confidence:.0%})"
 
-        # 更新融合显示
-        if MONITOR_AVAILABLE:
-            fusion_text = monitor.format_fusion_report(
-                v_emo=self.current_emotion,
-                v_conf=self.visual_confidence,
-                a_emo=audio_emotion,
-                a_conf=audio_confidence,
-                final=final_emotion
+            # TODO: 调用LLM生成回复
+            # from modules.llm import generate_empathetic_response
+            # response_text = ...
+            response_text = f"我感受到了你的情绪变化。你说：{user_text}"
+
+            # 更新对话历史 (Gradio 6.0+ 格式: 使用 role 和 content)
+            self.chat_history.append({"role": "user", "content": user_text})
+            self.chat_history.append({"role": "assistant", "content": response_text})
+
+            # 获取 GPU 显存
+            gpu_mem = monitor.get_resource_status().get("gpu_mem", "--") if MONITOR_AVAILABLE else "--"
+
+            # 更新日志
+            log_entries = [
+                f"[{time.strftime('%H:%M:%S')}] 录音完成: {audio_path}",
+                f"[{time.strftime('%H:%M:%S')}] ASR识别: {user_text}",
+                f"[{time.strftime('%H:%M:%S')}] 录音期间视觉众数: {visual_decision}",
+                f"[{time.strftime('%H:%M:%S')}] 时序融合决策: {final_emotion}",
+                fusion_info
+            ]
+            self.system_logs.extend(log_entries)
+            if len(self.system_logs) > 50:
+                self.system_logs = self.system_logs[-50:]
+
+            return (
+                self.chat_history,
+                user_text,
+                None,
+                fusion_text,
+                visual_weight,
+                audio_weight,
+                "\n".join(self.system_logs[-10:]),
+                "处理完成",
+                gpu_mem
             )
-        else:
-            fusion_text = f"视觉情绪: {self.current_emotion} ({self.visual_confidence:.0%})\n"
-            fusion_text += f"听觉情绪: {audio_emotion} ({audio_confidence:.0%})\n"
-            fusion_text += f"最终决策: {final_emotion}"
-
-        # TODO: 调用LLM生成回复
-        # from modules.llm import generate_empathetic_response
-        # response_text = ...
-
-        # 模拟回复（实际使用时删除）
-        response_text = "我听到你今天感觉不太好，能和我说说发生了什么吗？我在这里陪着你。"
-
-        # TODO: 调用TTS生成语音
-        # from modules.tts import text_to_speech
-        # audio_output_path = ...
-
-        # 模拟音频路径（实际使用时删除）
-        audio_output_path = None
-
-        # 更新对话历史 (Gradio 6.0+ 格式: 使用 role 和 content)
-        self.chat_history.append({"role": "user", "content": user_text})
-        self.chat_history.append({"role": "assistant", "content": response_text})
-
-        # 获取 GPU 显存
-        gpu_mem = monitor.get_resource_status().get("gpu_mem", "--") if MONITOR_AVAILABLE else "--"
-
-        # 更新日志
-        log_entries = [
-            f"[{time.strftime('%H:%M:%S')}] 录音完成: {audio_path}",
-            f"[{time.strftime('%H:%M:%S')}] ASR识别: {user_text}",
-            f"[{time.strftime('%H:%M:%S')}] 语音情感: {audio_emotion} ({audio_confidence:.0%})",
-            f"[{time.strftime('%H:%M:%S')}] 融合决策: {final_emotion}",
-            f"[{time.strftime('%H:%M:%S')}] LLM生成完成"
-        ]
-        self.system_logs.extend(log_entries)
-        if len(self.system_logs) > 50:
-            self.system_logs = self.system_logs[-50:]
-
-        return (
-            self.chat_history,
-            user_text,
-            audio_output_path,
-            fusion_text,
-            visual_weight,
-            audio_weight,
-            "\n".join(self.system_logs[-10:]),
-            "处理完成",
-            gpu_mem
-        )
+        finally:
+            self.is_asr_processing = False  # 释放算力锁定，视觉恢复
 
     def clear_chat(self):
         """清空对话历史"""
@@ -577,13 +611,37 @@ class EmotionChatInterface:
 
 
 def main():
-    """主函数 - 启动界面"""
+    """主函数 - 在启动界面前完成模型加载"""
+
+    print("🚀 [系统启动] 正在预加载多模态模型到 GPU 显存...")
+
+    # 1. 预加载视觉模型
+    if VISION_AVAILABLE:
+        from modules.vision import get_detector
+        get_detector()  # 此调用会触发 ViT 模型的加载
+        print("✅ 视觉模块预加载完成")
+
+    # 2. 预加载音频模型
+    if AUDIO_AVAILABLE:
+        from modules.audio import _get_model
+        _get_model()    # 此调用会触发 Whisper 模型加载到 GPU
+        print("✅ 音频转录模型预加载完成")
+
+    print("🎉 所有模型预加载完成，启动 Gradio 界面...")
+
+    # 3. 实例化界面
     app = EmotionChatInterface()
+
+    # 【必须开启】这是异步和并发的前提开关
+    app.interface.queue()
+
+    # 启动服务
     app.launch(
         server_name="0.0.0.0",
         server_port=7863,
         share=False,
-        show_error=True
+        show_error=True,
+        max_threads=40  # 增加线程池大小适配 L40S
     )
 
 

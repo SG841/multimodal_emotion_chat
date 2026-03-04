@@ -1,47 +1,56 @@
 """
 utils/monitor.py
-状态监控模块：专注于硬件资源监测及多模态融合决策日志的格式化
+硬件级监控模块：专注显存状态
 """
 
 import time
-import psutil
 import torch
+import pynvml
 from typing import Dict
 
 class SystemMonitor:
     def __init__(self):
-        # 初始化 GPU 监测
         self.has_cuda = torch.cuda.is_available()
-
-    def get_resource_status(self) -> Dict[str, str]:
-        """获取系统资源占用状况，支撑 app.py 中的显存显示"""
-        status = {"cpu": f"{psutil.cpu_percent()}"}
+        self.nvml_initialized = False
 
         if self.has_cuda:
-            # 获取显存已用空间
-            mem_allocated = torch.cuda.memory_allocated() / (1024 ** 2)
-            status["gpu_mem"] = f"{mem_allocated:.0f} MB"
-        else:
-            status["gpu_mem"] = "无 GPU"
+            try:
+                pynvml.nvmlInit()
+                # 关联 L40S 显卡句柄
+                self.handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                self.nvml_initialized = True
+            except Exception as e:
+                print(f"⚠️ [监控系统] 硬件接口调用失败: {e}")
+
+    def get_resource_status(self) -> Dict[str, str]:
+        """
+        直接通过 NVML 获取显卡真实的已用显存。
+        这能准确反映 Whisper (C++/Ctranslate2) 和 ViT 的总占用。
+        """
+        status = {"gpu_mem": "-- MB"}
+
+        if self.nvml_initialized:
+            try:
+                # 获取显存原始数据 (Bytes)
+                info = pynvml.nvmlDeviceGetMemoryInfo(self.handle)
+                used_mb = info.used / (1024**2)
+                total_mb = info.total / (1024**2)
+
+                # 格式化输出：已用 / 总共
+                status["gpu_mem"] = f"{used_mb:.0f} / {total_mb:.0f} MB"
+            except:
+                status["gpu_mem"] = "读取异常"
 
         return status
 
     def format_fusion_report(self, v_emo: str, v_conf: float, a_emo: str, a_conf: float, final: str) -> str:
-        """
-        将后端的融合逻辑转化为前端易读的文本报告。
-        用于解释为什么系统最终选择了某种情绪。
-        """
+        """保持原有方法签名，确保 app.py 调用不报错"""
         timestamp = time.strftime("%H:%M:%S")
-
-        # 这里的逻辑可以帮助你在答辩时解释"置信度对齐"的过程
-        report = (
-            f"[{timestamp}] 融合决策路径：\n"
-            f"  - 视觉序列聚合结果: {v_emo} (置信度: {v_conf:.2f})\n"
-            f"  - 听觉片段识别结果: {a_emo} (置信度: {a_conf:.2f})\n"
-            f"  - 综合决策判定 >> {final} <<"
+        return (
+            f"[{timestamp}] 融合决策：{final}\n"
+            f"视觉判定: {v_emo} ({v_conf:.2%})\n"
+            f"听觉判定: {a_emo} ({a_conf:.2%})"
         )
-        return report
 
-
-# 导出单例，方便 app.py 直接调用
+# 导出单例
 monitor = SystemMonitor()

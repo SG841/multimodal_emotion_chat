@@ -81,6 +81,7 @@ class VisionEmotionDetector:
             self._create_gpu_transform()
 
             print(f"[视觉模块] 模型已加载到 {self.device}")
+            print(f"DEBUG [视觉]: 模型实际运行设备 -> {self.model.device}")
 
         except Exception as e:
             print(f"[视觉模块] 模型加载失败: {e}")
@@ -146,17 +147,21 @@ class VisionEmotionDetector:
             )
 
         start_time = time.time()
+        start = time.perf_counter()  # 【精准测速】高精度计时开始
 
         # 转换图像格式
         if image is None:
             return "Neutral", 0.0, {}
 
-        # 情绪识别推理 - 原生 torch + 真正的GPU预处理
+        # 情绪识别推理 - 原生 torch + 真正的GPU预处理 + 异步拷贝
         try:
             with torch.inference_mode():  # 比 torch.no_grad() 更高效
-                # 1. 瞬间搬运到 GPU (H, W, C) -> (C, H, W)
+                # 1. 【异步拷贝】non_blocking=True 让 CPU 不等待 GPU 完成拷贝
                 # 直接从 numpy 转为 tensor，不经过 PIL，不经过 CPU 缩放
-                img_tensor = torch.from_numpy(image).to(self.device).permute(2, 0, 1)
+                img_tensor = torch.from_numpy(image.copy()).to(self.device, non_blocking=True).permute(2, 0, 1)
+
+                # 【测速】搬运耗时
+                t1 = time.perf_counter()
 
                 # 2. 转换为半精度并归一化到 [0, 1]
                 # L4S 处理这种张量计算快如闪电
@@ -166,8 +171,17 @@ class VisionEmotionDetector:
                 # 这步是在 GPU 上并行的
                 img_tensor = self.gpu_transform(img_tensor).unsqueeze(0)
 
+                # 【测速】预处理耗时
+                t2 = time.perf_counter()
+
                 # 4. 推理
                 outputs = self.model(pixel_values=img_tensor)
+
+                # 【测速】推理耗时
+                t3 = time.perf_counter()
+
+                # 【调试输出】各环节耗时分析
+                print(f"[Vision] 搬运: {(t1-start)*1000:.2f}ms | 预处理: {(t2-t1)*1000:.2f}ms | 推理: {(t3-t2)*1000:.2f}ms")
 
                 # 5. 后处理 (直接在 GPU 上算 Softmax)
                 logits = outputs.logits

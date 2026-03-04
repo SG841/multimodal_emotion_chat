@@ -39,6 +39,8 @@ def _get_model() -> WhisperModel:
             compute_type=_model_config["compute_type"]
         )
 
+        # 强制检查底层模型所在的设备
+        print(f"DEBUG [音频]: Whisper 模型已部署在 -> {_model.model.device}")
         print("✅ Whisper 模型加载完成")
 
     return _model
