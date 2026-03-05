@@ -53,7 +53,7 @@ class EmotionChatInterface:
         self._frame_count_internal = 0  # 内部帧计数器（整数）
         self.last_emotion_probs = {}   # 保存最后一次的情绪概率
 
-        # === 新增状态管理 ===
+        # === 状态管理 ===
         self.is_recording = False          # 正在录音标记
         self.is_asr_processing = False     # 正在 ASR 推理标记（算力避让锁）
         self.recording_emotion_buffer = [] # 录音期间的情感缓冲区
@@ -85,12 +85,12 @@ class EmotionChatInterface:
                     # 摄像头视频流 - 强制低分辨率采集 (320x240 减少带宽)
                     # 注意: height/width 参数会影响 getUserMedia 约束
                     self.video_input = gr.Image(
-                        sources=["webcam"],
+                        sources=["webcam"],  
                         streaming=True,
                         label="实时视频流",
                         elem_id="video-stream",
                         height=240,   # 强制采集高度 240
-                        width=320     # 强制采集宽度 320
+                        width=320     # 强制采集宽度 320   低分辨率减少带宽
                     )
 
                     # 情绪状态显示卡片
@@ -125,7 +125,7 @@ class EmotionChatInterface:
                         self.last_update = gr.Textbox(
                             label="最后更新时间",
                             value="--",
-                            interactive=False
+                            interactive=False  #  只读用户不能修改
                         )
 
                 # ===== 右侧：交互区域 =====
@@ -150,7 +150,7 @@ class EmotionChatInterface:
                             label="语音输入"
                         )
                         self.recording_status = gr.Textbox(
-                            value="点击录音开始说话...",
+                            value="点击录制开始说话...",
                             interactive=False,
                             scale=2
                         )
@@ -245,7 +245,7 @@ class EmotionChatInterface:
             queue=False
         )
 
-        # 新增：录音开始事件
+        # 录音开始事件
         self.audio_input.start_recording(
             fn=self.handle_recording_start,
             outputs=[self.recording_status]
