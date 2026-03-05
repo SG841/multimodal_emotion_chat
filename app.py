@@ -57,7 +57,8 @@ class EmotionChatInterface:
         self.is_recording = False          # 正在录音标记
         self.is_asr_processing = False     # 正在 ASR 推理标记（算力避让锁）
         self.recording_emotion_buffer = [] # 录音期间的情感缓冲区
-        self.last_proc_time = 0          # 【频率控制】记录上次处理时间戳
+        self.last_proc_time = 0           # 【频率控制】记录上次处理时间戳
+        self._last_frame_arrive_time = 0  # 【探针】记录上一帧到达我们函数的时间
 
         # 创建界面
         self.create_interface()
@@ -307,6 +308,13 @@ class EmotionChatInterface:
         Returns:
             情绪标签、置信度、情绪条HTML、帧计数、更新时间、日志
         """
+        # 【探针 1：记录进入函数的第一瞬间】
+        t_enter = time.perf_counter()
+
+        # 计算距离上一帧到达经过了多久
+        arrive_delta = (t_enter - self._last_frame_arrive_time) * 1000 if self._last_frame_arrive_time else 0
+        self._last_frame_arrive_time = t_enter
+
         if video_frame is None:
             gpu_mem = monitor.get_resource_status().get("gpu_mem", "--") if MONITOR_AVAILABLE else "--"
             return "等待中...", "--", self._get_empty_emotion_bars(), 0, "--", "等待视频流...", gpu_mem
@@ -329,10 +337,13 @@ class EmotionChatInterface:
                 "--"
             )
 
+        # 【探针 2：调用视觉模块前】
+        t_before_vis = time.perf_counter()
+
         # 调用视觉模块进行情绪识别
         try:
             if VISION_AVAILABLE:
-                # 【优化】直接传 numpy 数组，torch.from_numpy 在 vision.py 中直接接管显存，避免 CPU 拷贝
+                # 【优化】直接传 numpy 数组，torch.as_tensor 在 vision.py 中直接共享内存，避免 CPU 拷贝
                 emotion, confidence, probs = await asyncio.to_thread(predict_emotion, video_frame, skip_frames=1)
 
                 # 更新实时状态
@@ -347,6 +358,9 @@ class EmotionChatInterface:
             emotion = self.current_emotion
             confidence = self.visual_confidence
             emotion_probs = self.last_emotion_probs
+
+        # 【探针 3：调用视觉模块后】
+        t_after_vis = time.perf_counter()
 
         # 生成情绪条HTML
         emotion_bars_html = self._get_emotion_bars(emotion_probs)
@@ -364,6 +378,12 @@ class EmotionChatInterface:
 
         # 获取 GPU 显存
         gpu_mem = monitor.get_resource_status().get("gpu_mem", "--") if MONITOR_AVAILABLE else "--"
+
+        # 【探针 4：函数执行完毕，准备返回给 Gradio】
+        t_exit = time.perf_counter()
+
+        # 打印 App 侧的总耗时报告
+        print(f"📊 [App 探针] 帧间隔: {arrive_delta:.1f}ms | Vision调用: {(t_after_vis - t_before_vis)*1000:.1f}ms | App总处理: {(t_exit - t_enter)*1000:.1f}ms")
 
         return (
             emotion,

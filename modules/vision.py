@@ -146,74 +146,62 @@ class VisionEmotionDetector:
                 self.last_emotion_probs
             )
 
-        start_time = time.time()
-        start = time.perf_counter()  # 【精准测速】高精度计时开始
-
         # 转换图像格式
         if image is None:
             return "Neutral", 0.0, {}
 
+        # 【探针：Vision 内部总计时开始】
+        start_total = time.perf_counter()
+
         # 情绪识别推理 - 原生 torch + 真正的GPU预处理 + 异步拷贝
         try:
             with torch.inference_mode():  # 比 torch.no_grad() 更高效
-                # 1. 【异步拷贝】non_blocking=True 让 CPU 不等待 GPU 完成拷贝
-                # 直接从 numpy 转为 tensor，不经过 PIL，不经过 CPU 缩放
-                img_tensor = torch.from_numpy(image.copy()).to(self.device, non_blocking=True).permute(2, 0, 1)
-
-                # 【测速】搬运耗时
+                # 阶段 1：CPU 到 GPU 的搬运
+                t0 = time.perf_counter()
+                img_tensor = torch.as_tensor(image).to(self.device, non_blocking=True).permute(2, 0, 1)
                 t1 = time.perf_counter()
 
-                # 2. 转换为半精度并归一化到 [0, 1]
-                # L4S 处理这种张量计算快如闪电
+                # 阶段 2：预处理 (FP16转换 + GPU Transform)
                 img_tensor = img_tensor.half() / 255.0
-
-                # 3. 真正的 GPU 预处理：Resize, Crop, Normalize
-                # 这步是在 GPU 上并行的
-                img_tensor = self.gpu_transform(img_tensor).unsqueeze(0)
-
-                # 【测速】预处理耗时
+                if self.gpu_transform:
+                    img_tensor = self.gpu_transform(img_tensor).unsqueeze(0)
+                else:
+                    img_tensor = img_tensor.unsqueeze(0)
                 t2 = time.perf_counter()
 
-                # 4. 推理
+                # 阶段 3：模型网络推理
                 outputs = self.model(pixel_values=img_tensor)
-
-                # 【测速】推理耗时
                 t3 = time.perf_counter()
 
-                # 【调试输出】各环节耗时分析
-                print(f"[Vision] 搬运: {(t1-start)*1000:.2f}ms | 预处理: {(t2-t1)*1000:.2f}ms | 推理: {(t3-t2)*1000:.2f}ms")
-
-                # 5. 后处理 (直接在 GPU 上算 Softmax)
+                # 阶段 4：后处理 (Softmax 与 TopK 提取)
                 logits = outputs.logits
                 probs = F.softmax(logits, dim=-1)[0]
-
-                # 获取 top-7
                 top_k = min(7, len(probs))
                 top_probs, top_indices = torch.topk(probs, top_k)
 
-                # 转换为 CPU numpy 数组
                 top_probs = top_probs.cpu().numpy()
                 top_indices = top_indices.cpu().numpy()
-
-                # 获取标签
                 id2label = self.model.config.id2label
                 top_labels = [id2label[idx] for idx in top_indices]
 
-                # 构建结果
                 emotion = top_labels[0]
                 confidence = float(top_probs[0])
                 emotion_probs = {label: float(prob) for label, prob in zip(top_labels, top_probs)}
+                t4 = time.perf_counter()
 
-            # 更新缓存
+            # 更新缓存与全局状态...
             self.last_emotion = emotion
             self.last_confidence = confidence
             self.last_emotion_probs = emotion_probs
 
+            # 【输出 Vision 侧极度详细的耗时报告】
+            print(f"👁️ [Vision 探针] 搬运: {(t1-t0)*1000:.1f}ms | 预处理: {(t2-t1)*1000:.1f}ms | 推理: {(t3-t2)*1000:.1f}ms | 后处理: {(t4-t3)*1000:.1f}ms | 内部总计: {(t4-start_total)*1000:.1f}ms")
+
             # 更新全局状态
             update_visual_emotion(emotion, confidence, emotion_probs)
 
-            # 记录推理耗时
-            inference_time = (time.time() - start_time) * 1000
+            # 记录推理耗时（使用更精确的 perf_counter 计时）
+            inference_time = (t4 - start_total) * 1000
             record_inference_time("vision", inference_time)
 
             return emotion, confidence, emotion_probs
