@@ -53,12 +53,11 @@ class EmotionChatInterface:
         self._frame_count_internal = 0  # 内部帧计数器（整数）
         self.last_emotion_probs = {}   # 保存最后一次的情绪概率
 
-        # === 状态管理 ===
+        # === 新增状态管理 ===
         self.is_recording = False          # 正在录音标记
         self.is_asr_processing = False     # 正在 ASR 推理标记（算力避让锁）
         self.recording_emotion_buffer = [] # 录音期间的情感缓冲区
-        self.last_proc_time = 0           # 【频率控制】记录上次处理时间戳
-        self._last_frame_arrive_time = 0  # 【探针】记录上一帧到达我们函数的时间
+        self.last_proc_time = 0          # 【频率控制】记录上次处理时间戳
 
         # 创建界面
         self.create_interface()
@@ -85,12 +84,12 @@ class EmotionChatInterface:
                     # 摄像头视频流 - 强制低分辨率采集 (320x240 减少带宽)
                     # 注意: height/width 参数会影响 getUserMedia 约束
                     self.video_input = gr.Image(
-                        sources=["webcam"],  
+                        sources=["webcam"],
                         streaming=True,
                         label="实时视频流",
                         elem_id="video-stream",
                         height=240,   # 强制采集高度 240
-                        width=320     # 强制采集宽度 320   低分辨率减少带宽
+                        width=320     # 强制采集宽度 320
                     )
 
                     # 情绪状态显示卡片
@@ -125,7 +124,7 @@ class EmotionChatInterface:
                         self.last_update = gr.Textbox(
                             label="最后更新时间",
                             value="--",
-                            interactive=False  #  只读用户不能修改
+                            interactive=False
                         )
 
                 # ===== 右侧：交互区域 =====
@@ -138,7 +137,7 @@ class EmotionChatInterface:
                         height=300,
                         avatar_images=(
                             None,  # 用户头像
-                            "🤖"  # 系统头像
+                            "🤖"  # 系统头像（显示有问题）
                         )
                     )
 
@@ -150,7 +149,7 @@ class EmotionChatInterface:
                             label="语音输入"
                         )
                         self.recording_status = gr.Textbox(
-                            value="点击录制开始说话...",
+                            value="点击录音开始说话...",
                             interactive=False,
                             scale=2
                         )
@@ -245,7 +244,7 @@ class EmotionChatInterface:
             queue=False
         )
 
-        # 录音开始事件
+        # 新增：录音开始事件
         self.audio_input.start_recording(
             fn=self.handle_recording_start,
             outputs=[self.recording_status]
@@ -308,13 +307,6 @@ class EmotionChatInterface:
         Returns:
             情绪标签、置信度、情绪条HTML、帧计数、更新时间、日志
         """
-        # 【探针 1：记录进入函数的第一瞬间】
-        t_enter = time.perf_counter()
-
-        # 计算距离上一帧到达经过了多久
-        arrive_delta = (t_enter - self._last_frame_arrive_time) * 1000 if self._last_frame_arrive_time else 0
-        self._last_frame_arrive_time = t_enter
-
         if video_frame is None:
             gpu_mem = monitor.get_resource_status().get("gpu_mem", "--") if MONITOR_AVAILABLE else "--"
             return "等待中...", "--", self._get_empty_emotion_bars(), 0, "--", "等待视频流...", gpu_mem
@@ -337,13 +329,10 @@ class EmotionChatInterface:
                 "--"
             )
 
-        # 【探针 2：调用视觉模块前】
-        t_before_vis = time.perf_counter()
-
         # 调用视觉模块进行情绪识别
         try:
             if VISION_AVAILABLE:
-                # 【优化】直接传 numpy 数组，torch.as_tensor 在 vision.py 中直接共享内存，避免 CPU 拷贝
+                # 【优化】直接传 numpy 数组，torch.from_numpy 在 vision.py 中直接接管显存，避免 CPU 拷贝
                 emotion, confidence, probs = await asyncio.to_thread(predict_emotion, video_frame, skip_frames=1)
 
                 # 更新实时状态
@@ -358,9 +347,6 @@ class EmotionChatInterface:
             emotion = self.current_emotion
             confidence = self.visual_confidence
             emotion_probs = self.last_emotion_probs
-
-        # 【探针 3：调用视觉模块后】
-        t_after_vis = time.perf_counter()
 
         # 生成情绪条HTML
         emotion_bars_html = self._get_emotion_bars(emotion_probs)
@@ -378,12 +364,6 @@ class EmotionChatInterface:
 
         # 获取 GPU 显存
         gpu_mem = monitor.get_resource_status().get("gpu_mem", "--") if MONITOR_AVAILABLE else "--"
-
-        # 【探针 4：函数执行完毕，准备返回给 Gradio】
-        t_exit = time.perf_counter()
-
-        # 打印 App 侧的总耗时报告
-        print(f"📊 [App 探针] 帧间隔: {arrive_delta:.1f}ms | Vision调用: {(t_after_vis - t_before_vis)*1000:.1f}ms | App总处理: {(t_exit - t_enter)*1000:.1f}ms")
 
         return (
             emotion,
