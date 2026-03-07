@@ -240,7 +240,7 @@ class EmotionChatInterface:
                 self.gpu_memory
             ],
             show_progress="hidden",
-            concurrency_limit=1,  # 单线程循环，防止队列积压
+            concurrency_limit=1,  # 单线程循环，防止帧积压
             queue=False
         )
 
@@ -311,7 +311,7 @@ class EmotionChatInterface:
             gpu_mem = monitor.get_resource_status().get("gpu_mem", "--") if MONITOR_AVAILABLE else "--"
             return "等待中...", "--", self._get_empty_emotion_bars(), 0, "--", "等待视频流...", gpu_mem
 
-        # 【频率控制】强制每 150ms 最多处理一帧（约 6-7 FPS），减少 CPU 负担
+        # 【频率控制】强制每 150ms 最多处理一帧（约 6-7 FPS），减少 CPU 负担 （跟queue=False双重保险）
         curr_time = time.time()
         if curr_time - self.last_proc_time < 0.15:
             return (gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip())
