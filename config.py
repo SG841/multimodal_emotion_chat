@@ -16,7 +16,7 @@ VISION_DEVICE = None  # None表示自动检测GPU，或指定为0表示使用第
 
 # 听觉模块配置
 ASR_MODEL = "small"  # Whisper模型大小: tiny/base/small/medium/large
-SER_MODEL = "superb/wav2vec2-base-superb-er"
+SER_MODEL = "/root/multimodal_emotion_chat/models/emotion2vec"  # emotion2vec模型路径
 AUDIO_SAMPLE_RATE = 16000
 
 # LLM配置

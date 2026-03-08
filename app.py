@@ -11,6 +11,7 @@ import sys
 import os
 import asyncio
 import collections
+from functools import partial
 
 # 添加项目路径
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -25,7 +26,7 @@ except ImportError as e:
 
 # 导入音频模块
 try:
-    from modules.audio import transcribe_audio
+    from modules.audio import transcribe_audio, predict_audio_emotion
     AUDIO_AVAILABLE = True
 except ImportError as e:
     print(f"音频模块导入失败: {e}")
@@ -423,9 +424,13 @@ class EmotionChatInterface:
                 visual_decision = self.current_emotion
                 fusion_info = "未捕获到录音期间的视觉数据，采用末帧。"
 
-            # 3. 模拟融合逻辑（暂时保持占位数据，之后接入 SER）
-            audio_emotion = "Sad"  # 占位
-            audio_confidence = 0.85  # 占位
+            # 3. 【音频情感识别】使用emotion2vec进行语音情感识别
+            if AUDIO_AVAILABLE:
+                audio_emotion, audio_confidence, audio_probs = await asyncio.to_thread(predict_audio_emotion, audio_path)
+            else:
+                audio_emotion = "Neutral"
+                audio_confidence = 0.0
+                audio_probs = {}
 
             # 融合决策改用录音期间的综合结果 visual_decision
             final_emotion = audio_emotion if audio_confidence > 0.8 else visual_decision
@@ -621,11 +626,13 @@ def main():
         get_detector()  # 此调用会触发 ViT 模型的加载
         print("✅ 视觉模块预加载完成")
 
-    # 2. 预加载音频模型
+    # 2. 预加载音频asr和音频情感模型
     if AUDIO_AVAILABLE:
-        from modules.audio import _get_model
+        from modules.audio import _get_model, _get_emotion_model
         _get_model()    # 此调用会触发 Whisper 模型加载到 GPU
         print("✅ 音频转录模型预加载完成")
+        _get_emotion_model()  # 此调用会触发 emotion2vec 模型加载到 GPU
+        print("✅ 音频情感分析模型预加载完成")
 
     print("🎉 所有模型预加载完成，启动 Gradio 界面...")
 
