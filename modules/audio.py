@@ -16,7 +16,7 @@ _emotion_model = None
 _model_config = {
     "model_path": os.path.join(
         os.path.dirname(__file__),
-        "../models/faster-whisper/models--Systran--faster-whisper-large-v3/snapshots/edaa852ec7e145841d8ffdb056a99866b5f0a478"
+        "../models/faster-whisper"
     ),  # 本地模型路径
     "device": "cuda",
     "compute_type": "float16"

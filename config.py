@@ -15,12 +15,12 @@ VISION_SKIP_FRAMES = 1  # 每1帧抽1帧
 VISION_DEVICE = None  # None表示自动检测GPU，或指定为0表示使用第一个GPU
 
 # 听觉模块配置
-ASR_MODEL = "small"  # Whisper模型大小: tiny/base/small/medium/large
+ASR_MODEL = "large"  # Whisper模型大小: tiny/base/small/medium/large
 SER_MODEL = "/root/multimodal_emotion_chat/models/emotion2vec"  # emotion2vec模型路径
 AUDIO_SAMPLE_RATE = 16000
 
 # LLM配置
-LLM_MODEL = "Qwen/Qwen2.5-7B-Instruct"
+LLM_MODEL = "Qwen/Qwen3.5-9B-Instruct"
 LLM_MAX_LENGTH = 512
 LLM_TEMPERATURE = 0.7
 
