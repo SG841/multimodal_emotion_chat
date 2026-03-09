@@ -20,7 +20,7 @@ SER_MODEL = "/root/multimodal_emotion_chat/models/emotion2vec"  # emotion2vec模
 AUDIO_SAMPLE_RATE = 16000
 
 # LLM配置
-LLM_MODEL = "Qwen/Qwen3.5-9B-Instruct"
+LLM_MODEL = "/root/multimodal_emotion_chat/models/qwen3.5-9b"  # 使用本地模型路径
 LLM_MAX_LENGTH = 512
 LLM_TEMPERATURE = 0.7
 

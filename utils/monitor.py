@@ -5,7 +5,7 @@ utils/monitor.py
 
 import time
 import torch
-import pynvml
+import pynvml  # nvidia-ml-py 包提供的导入名仍然是 pynvml
 from typing import Dict
 
 class SystemMonitor:

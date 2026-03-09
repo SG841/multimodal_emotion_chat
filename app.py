@@ -32,6 +32,14 @@ except ImportError as e:
     print(f"音频模块导入失败: {e}")
     AUDIO_AVAILABLE = False
 
+# 导入LLM模块
+try:
+    from modules.llm import generate_empathetic_response, _get_llm_model
+    LLM_AVAILABLE = True
+except ImportError as e:
+    print(f"LLM模块导入失败: {e}")
+    LLM_AVAILABLE = False
+
 # 导入监控模块
 try:
     from utils.monitor import monitor
@@ -181,26 +189,11 @@ class EmotionChatInterface:
                 with gr.Column(scale=1):
                     # 融合决策显示
                     self.fusion_display = gr.Textbox(
-                        label="多模态融合决策",
+                        label="多模态参考信息",
                         value="等待数据...",
                         interactive=False,
-                        lines=3
+                        lines=4
                     )
-
-                    # 融合权重显示
-                    with gr.Row():
-                        self.visual_weight = gr.Textbox(
-                            label="视觉权重",
-                            value="--",
-                            interactive=False,
-                            scale=1
-                        )
-                        self.audio_weight = gr.Textbox(
-                            label="听觉权重",
-                            value="--",
-                            interactive=False,
-                            scale=1
-                        )
 
                 with gr.Column(scale=2):
                     # 系统日志
@@ -251,7 +244,7 @@ class EmotionChatInterface:
             outputs=[self.recording_status]
         )
 
-        # 录音结束：触发 ASR + 时序融合
+        # 录音结束：触发 ASR + LLM 情感分析
         self.audio_input.stop_recording(
             fn=self.process_dialogue,
             inputs=[self.audio_input, self.recognized_text],
@@ -260,8 +253,6 @@ class EmotionChatInterface:
                 self.recognized_text,
                 self.audio_output,
                 self.fusion_display,
-                self.visual_weight,
-                self.audio_weight,
                 self.log_display,
                 self.recording_status,
                 self.gpu_memory
@@ -389,7 +380,7 @@ class EmotionChatInterface:
             current_text: 当前显示的文本
 
         Returns:
-            对话历史、识别文本、音频输出、融合决策、视觉权重、听觉权重、日志、耗时、状态
+            对话历史、识别文本、音频输出、融合决策、日志、状态、显存
         """
         if not audio_path:
             gpu_mem = monitor.get_resource_status().get("gpu_mem", "--") if MONITOR_AVAILABLE else "--"
@@ -398,8 +389,6 @@ class EmotionChatInterface:
                 current_text,
                 None,
                 "等待语音输入...",
-                "--",
-                "--",
                 "\n".join(self.system_logs[-10:]),
                 "请先录音",
                 gpu_mem
@@ -432,29 +421,28 @@ class EmotionChatInterface:
                 audio_confidence = 0.0
                 audio_probs = {}
 
-            # 融合决策改用录音期间的综合结果 visual_decision
-            final_emotion = audio_emotion if audio_confidence > 0.8 else visual_decision
-            visual_weight = f"{(1 - audio_confidence) * 100:.0f}%"
-            audio_weight = f"{audio_confidence * 100:.0f}%"
-
-            # 更新融合显示
-            if MONITOR_AVAILABLE:
-                fusion_text = monitor.format_fusion_report(
-                    v_emo=visual_decision,
-                    v_conf=self.visual_confidence,
-                    a_emo=audio_emotion,
-                    a_conf=audio_confidence,
-                    final=final_emotion
+            # 调用LLM生成回复（直接用大模型预测最终情绪）
+            # 多模态信息仅作为 LLM 的参考背景
+            if LLM_AVAILABLE:
+                print(f"[{time.strftime('%H:%M:%S')}] 开始调用 LLM 生成回复...")
+                # 接收返回的两个值
+                llm_emotion, response_text = await asyncio.to_thread(
+                    generate_empathetic_response,
+                    user_text,
+                    visual_decision,
+                    audio_emotion,
+                    visual_decision,  # 改为传入视觉情绪作为参考
+                    self.chat_history
                 )
             else:
-                fusion_text = f"时序融合决策: {final_emotion}\n"
-                fusion_text += f"录音期间视觉: {visual_decision}\n"
-                fusion_text += f"音频情感: {audio_emotion} ({audio_confidence:.0%})"
+                llm_emotion = "Neutral"
+                response_text = f"我感受到了你的情绪变化。你说：{user_text}"
 
-            # TODO: 调用LLM生成回复
-            # from modules.llm import generate_empathetic_response
-            # response_text = ...
-            response_text = f"我感受到了你的情绪变化。你说：{user_text}"
+            # 生成融合显示文本（仅显示多模态参考信息）
+            fusion_text = f"多模态参考信息：\n"
+            fusion_text += f"视觉检测: {visual_decision}\n"
+            fusion_text += f"音频情感: {audio_emotion} ({audio_confidence:.0%})\n"
+            fusion_text += f"大模型最终决策: {llm_emotion}"
 
             # 更新对话历史 (Gradio 6.0+ 格式: 使用 role 和 content)
             self.chat_history.append({"role": "user", "content": user_text})
@@ -468,8 +456,9 @@ class EmotionChatInterface:
                 f"[{time.strftime('%H:%M:%S')}] 录音完成: {audio_path}",
                 f"[{time.strftime('%H:%M:%S')}] ASR识别: {user_text}",
                 f"[{time.strftime('%H:%M:%S')}] 录音期间视觉众数: {visual_decision}",
-                f"[{time.strftime('%H:%M:%S')}] 时序融合决策: {final_emotion}",
-                fusion_info
+                f"[{time.strftime('%H:%M:%S')}] 音频情感参考: {audio_emotion} ({audio_confidence:.0%})",
+                fusion_info,
+                f"[{time.strftime('%H:%M:%S')}] LLM最终情绪判定: {llm_emotion}"
             ]
             self.system_logs.extend(log_entries)
             if len(self.system_logs) > 50:
@@ -480,8 +469,6 @@ class EmotionChatInterface:
                 user_text,
                 None,
                 fusion_text,
-                visual_weight,
-                audio_weight,
                 "\n".join(self.system_logs[-10:]),
                 "处理完成",
                 gpu_mem
@@ -633,6 +620,12 @@ def main():
         print("✅ 音频转录模型预加载完成")
         _get_emotion_model()  # 此调用会触发 emotion2vec 模型加载到 GPU
         print("✅ 音频情感分析模型预加载完成")
+
+    # 新增: 3. 预加载 LLM 模型
+    if LLM_AVAILABLE:
+        print("🚀 [系统启动] 正在预加载 Qwen LLM 模型...")
+        _get_llm_model()
+        print("✅ LLM 模型预加载完成")
 
     print("🎉 所有模型预加载完成，启动 Gradio 界面...")
 
