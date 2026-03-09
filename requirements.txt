@@ -3,12 +3,12 @@ gradio==6.7.0
 gradio_client==2.2.0
 
 # PyTorch 生态
-torch==2.1.0+cu121
-torchvision==0.16.0+cu121
-torchaudio==2.1.0+cu121
+torch==2.1.2+cu121
+torchvision==0.16.2+cu121
+torchaudio==2.1.2+cu121
 
 # 视觉感知模块
-transformers==4.30.0
+transformers==4.38.0
 opencv-python-headless==4.8.1.78
 numpy==1.26.4
 pillow==10.2.0
@@ -20,20 +20,20 @@ onnxruntime>=1.14
 av>=11
 
 # 硬件监控
-nvidia-ml-py>=12.0
+# nvidia-ml-py>=12.0  # 暂时注释掉监控模块以避免冲突
 
 # Web 服务
 fastapi==0.133.1
 uvicorn==0.41.0
 
 # HuggingFace 生态
-huggingface_hub==0.36.2
-tokenizers==0.13.3
+huggingface_hub>=0.33.0  # 兼容 gradio 6.7.0
+tokenizers==0.14.0
 safetensors==0.7.0
 
 # ModelScope
-modelscope==1.34.0
-funasr==1.0.27
+# modelscope==1.34.0  # 暂时注释掉 modelscope 以避免冲突
+# funasr==1.0.27
 
 # 其他工具
 pydub==0.25.1

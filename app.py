@@ -94,11 +94,11 @@ class EmotionChatInterface:
                     # 注意: height/width 参数会影响 getUserMedia 约束
                     self.video_input = gr.Image(
                         sources=["webcam"],
-                        streaming=True,
+                        # streaming=True,
                         label="实时视频流",
                         elem_id="video-stream",
-                        height=240,   # 强制采集高度 240
-                        width=320     # 强制采集宽度 320
+                        # height=240,   # 强制采集高度 240
+                        # width=320     # 强制采集宽度 320
                     )
 
                     # 情绪状态显示卡片
@@ -639,7 +639,7 @@ def main():
     app.launch(
         server_name="0.0.0.0",
         server_port=7863,
-        share=False,
+        share=True, 
         show_error=True,
         max_threads=40  # 增加线程池大小适配 L40S
     )
