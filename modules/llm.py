@@ -3,6 +3,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 import sys
 import os
 import re
+import json  # 新增 json 导入
 
 # 导入配置文件
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -32,55 +33,54 @@ def _get_llm_model():
 
 def generate_empathetic_response(user_text: str, visual_emotion: str, audio_emotion: str, final_emotion: str, chat_history: list) -> tuple:
     """
-    结合多模态情感生成共情回复，并要求大模型输出最终的情感标签
-    返回: (llm_emotion, response_text)
+    结合多模态情感生成共情回复，使用前缀引导强制 JSON 输出
     """
     model, tokenizer = _get_llm_model()
 
-    # 1. 强格式化的系统 Prompt
-    system_prompt = (
-        "你是一个专业的中文心理咨询师。你的回答必须完全是中文！\n\n"
-        "【最高级指令 - 绝对禁止违反】：\n"
-        "⚠️ 禁止任何英文回答！你的回复必须100%使用中文！\n"
-        "1. 直接输出最终结果，不输出任何分析过程、思考步骤或多余解释。\n"
-        "2. 【语言强制规定】：除了情绪标签必须是指定的英文单词外，你的回复必须全部使用纯中文！绝对不允许在回复中夹杂任何英文单词！\n"
-        "3. 你的输出必须只有两行，严格按照以下格式：\n"
-        "情绪：[只能从 Happy, Sad, Angry, Neutral, Surprise, Fear 中选一个]\n"
-        "回复：[你的纯中文共情回复]\n\n"
-        "【正确示例】：\n"
-        "情绪：Happy\n"
-        "回复：很高兴认识你！听到你分享自己喜欢的唱跳和篮球，感觉你非常有活力呢，今天是有什么开心的事情想跟我分享吗？"
-    )
+    # 1. 极致精简的 System Prompt
+    system_prompt = """你是一个专业的心理咨询师,需要给照顾用户的同时提供一些有建设性的建议。请直接输出JSON格式的回复，不需要任何分析或解释。
+格式：{"emotion": "Happy/Sad/Angry/Neutral/Surprise/Fear", "response": "你的纯中文共情回复"}"""
 
-    # 2. 转换对话历史
-    messages = [{"role": "system", "content": system_prompt}]
+    messages = [
+        {"role": "system", "content": system_prompt},
+        # 极简打样
+        {"role": "user", "content": "（后台参考数据：视觉检测为 Neutral，语音情感为 Sad，系统初步判定为 Sad。）\n\n用户说：我最近压力真的很大，天天失眠。"},
+        {"role": "assistant", "content": '{"emotion": "Sad", "response": "听到你最近因为压力大而失眠，我感到很心疼。长期休息不好身体肯定吃不消，能跟我具体说说是什么让你这么有压力吗？"}'}
+    ]
+
     for msg in chat_history:
         messages.append(msg)
 
-    # 3. 注入多模态信息的当前输入
     current_input = (
         f"（后台参考数据：视觉检测为 {visual_emotion}，语音情感为 {audio_emotion}，系统初步判定为 {final_emotion}。）\n\n"
         f"用户说：{user_text}"
     )
     messages.append({"role": "user", "content": current_input})
 
-    # 4. 生成推理
+    # 2. 转换 Prompt
     text = tokenizer.apply_chat_template(
         messages,
         tokenize=False,
         add_generation_prompt=True
     )
+
+    # 【终极必杀技：物理外挂前缀引导】
+    # 我们直接帮模型打出左大括号和第一个键名，它就绝对不可能再输出 Thinking Process 了！
+    force_prefix = '{\n    "emotion": "'
+    text += force_prefix
+
     model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
 
+    # 3. 推理生成
     with torch.inference_mode():
         generated_ids = model.generate(
             model_inputs.input_ids,
-            max_new_tokens=LLM_MAX_LENGTH,
-            temperature=LLM_TEMPERATURE,
+            max_new_tokens=512,
+            do_sample=True,
+            temperature=0.1,
             top_p=0.8,
             repetition_penalty=1.05,
-            do_sample=True,                      # 🌟 修复 1：强制开启采样模式
-            pad_token_id=tokenizer.eos_token_id  # 🌟 修复 2：消除日志里的烦人警告
+            pad_token_id=tokenizer.eos_token_id # 顺手把终端里的警告消除掉
         )
 
     generated_ids = [
@@ -88,41 +88,45 @@ def generate_empathetic_response(user_text: str, visual_emotion: str, audio_emot
     ]
     raw_output = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
 
-    # 5. 解析模型的格式化输出
-    llm_emotion = "Neutral"  # 默认值
-    response_text = raw_output  # 如果解析失败，返回全部原始文本
+    # 把我们帮它写的前缀拼回去，构成完整的 JSON 字符串
+    full_json_string = force_prefix + raw_output
+    print(f"DEBUG [LLM完整输出]:\n{full_json_string}")
 
-    # 调试日志：输出原始结果
-    print(f"📝 [LLM模块] 模型原始输出:\n{raw_output}\n{'='*50}")
+    # 4. JSON 提取与解析
+    llm_emotion = "Neutral"
+    response_text = ""
 
     try:
-        # 使用正则提取"情绪："和"回复："后面的内容
-        emotion_match = re.search(r"情绪[:：]\s*([A-Za-z]+)", raw_output)
-        reply_match = re.search(r"回复[:：]\s*(.*)", raw_output, re.DOTALL)
+        # 【修复正则 bug】：找最后一个像 JSON 的块，防止抓到废话
+        json_matches = re.findall(r'\{.*?\}', full_json_string, re.DOTALL)
+        if json_matches:
+            json_str = json_matches[-1] # 取最后一个匹配项
+            data = json.loads(json_str)
 
-        if emotion_match:
-            parsed_emotion = emotion_match.group(1).capitalize()
-            # 确保提取出的情绪在我们的六个目标情绪内
+            parsed_emotion = data.get("emotion", "Neutral").capitalize()
             if parsed_emotion in ["Happy", "Sad", "Angry", "Neutral", "Surprise", "Fear"]:
                 llm_emotion = parsed_emotion
-            print(f"✅ [LLM模块] 解析情绪: {llm_emotion}")
-        else:
-            print(f"⚠️ [LLM模块] 未找到情绪标签")
 
-        if reply_match:
-            response_text = reply_match.group(1).strip()
-            print(f"✅ [LLM模块] 解析回复: {response_text}")
+            response_text = data.get("response", "").strip()
+
+            if not response_text:
+                raise ValueError("JSON中response字段为空")
         else:
-            print(f"⚠️ [LLM模块] 未找到回复标签")
-            # 如果解析失败，使用原始输出作为回复（过滤掉分析步骤）
-            lines = raw_output.split('\n')
-            filtered_lines = [line for line in lines if line and not any(keyword in line for keyword in ['情绪', '回复', '分析', '思考', '步骤', 'Emotion', 'Response'])]
-            if filtered_lines:
-                response_text = '\n'.join(filtered_lines[:3]).strip()  # 取前几行
+            # 极限兜底：如果 JSON 还是坏了，尝试硬切字符串
+            if '"response":' in full_json_string:
+                response_text = full_json_string.split('"response":')[1].strip(' "}\n')
             else:
-                response_text = raw_output
+                raise ValueError("未找到有效内容")
 
+    except json.JSONDecodeError as e:
+        print(f"⚠️ [LLM模块] JSON 解析失败: {e}")
+        # 如果少了右括号，尝试硬切
+        if '"response":' in full_json_string:
+            response_text = full_json_string.split('"response":')[1].strip(' "}\n')
+        else:
+            response_text = "我感受到了你的情绪，可以多和我说说吗？"
     except Exception as e:
-        print(f"⚠️ [LLM模块] 解析模型输出失败: {e}\n原始输出: {raw_output}")
+        print(f"⚠️ [LLM模块] 提取严重异常: {e}")
+        response_text = "我正在努力理解你的感受，请稍等。"
 
     return llm_emotion, response_text
