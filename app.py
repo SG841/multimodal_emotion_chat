@@ -40,6 +40,14 @@ except ImportError as e:
     print(f"LLM模块导入失败: {e}")
     LLM_AVAILABLE = False
 
+# 导入TTS模块
+try:
+    from modules.tts import generate_audio_reply
+    TTS_AVAILABLE = True
+except ImportError as e:
+    print(f"TTS模块导入失败: {e}")
+    TTS_AVAILABLE = False
+
 # 导入监控模块
 try:
     from utils.monitor import monitor
@@ -438,6 +446,12 @@ class EmotionChatInterface:
                 llm_emotion = "Neutral"
                 response_text = f"我感受到了你的情绪变化。你说：{user_text}"
 
+            # 【新增】调用 TTS 生成音频
+            audio_output_path = None
+            if TTS_AVAILABLE and response_text:
+                # 因为 process_dialogue 本身就是 async 函数，直接 await 即可
+                audio_output_path = await generate_audio_reply(response_text)
+
             # 生成融合显示文本（显示多模态参考信息 + 最终情感判定）
             fusion_text = f"多模态情感分析结果：\n"
             fusion_text += f"📷 视觉检测: {visual_decision}\n"
@@ -458,7 +472,8 @@ class EmotionChatInterface:
                 f"[{time.strftime('%H:%M:%S')}] 录音期间视觉众数: {visual_decision}",
                 f"[{time.strftime('%H:%M:%S')}] 音频情感参考: {audio_emotion} ({audio_confidence:.0%})",
                 fusion_info,
-                f"[{time.strftime('%H:%M:%S')}] LLM最终情绪判定: {llm_emotion}"
+                f"[{time.strftime('%H:%M:%S')}] LLM最终情绪判定: {llm_emotion}",
+                f"[{time.strftime('%H:%M:%S')}] TTS语音合成: {'成功' if audio_output_path else '失败/跳过'}"
             ]
             self.system_logs.extend(log_entries)
             if len(self.system_logs) > 50:
@@ -467,7 +482,7 @@ class EmotionChatInterface:
             return (
                 self.chat_history,
                 user_text,
-                None,
+                audio_output_path,  # <--- 这里原先是 None，现在替换为生成的音频路径
                 fusion_text,
                 "\n".join(self.system_logs[-10:]),
                 "处理完成",

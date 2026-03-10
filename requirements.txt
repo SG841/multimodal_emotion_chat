@@ -44,3 +44,6 @@ ffmpy==1.0.0
 Jinja2==3.1.6
 PyYAML==6.0.3
 tqdm==4.67.1
+
+# TTS 语音合成
+edge-tts==7.2.7
