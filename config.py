@@ -22,7 +22,7 @@ AUDIO_SAMPLE_RATE = 16000
 # LLM配置
 LLM_MODEL = "/root/multimodal_emotion_chat/models/qwen3.5-9b"  # 使用本地模型路径
 LLM_MAX_LENGTH = 512
-LLM_TEMPERATURE = 0.7
+LLM_TEMPERATURE = 0.95
 
 # TTS配置
 TTS_VOICE = "zh-CN-XiaoxiaoNeural"

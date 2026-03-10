@@ -38,16 +38,16 @@ def generate_empathetic_response(user_text: str, visual_emotion: str, audio_emot
     model, tokenizer = _get_llm_model()
 
     # 1. 强格式化的系统 Prompt
-# 1. 强格式化的系统 Prompt (全中文强制版)
     system_prompt = (
-        "你是一个富有同理心且专业的心理咨询师。你需要根据用户的文本输入以及系统提供的多模态情感分析结果，给出回答。\n\n"
-        "【最高级指令 - 严格遵守】：\n"
-        "1. 拒绝任何分析过程、思考步骤或多余解释。直接输出最终结果！\n"
-        "2. 【语言强制规定】：除了情绪标签必须是指定的纯英文单词外，其余所有内容（包括你的回复）**必须全部使用纯中文**！绝对不允许在回复中夹杂英文。\n"
-        "3. 你的输出必须只有两行，严格按照以下确切格式：\n"
+        "你是一个专业的中文心理咨询师。你的回答必须完全是中文！\n\n"
+        "【最高级指令 - 绝对禁止违反】：\n"
+        "⚠️ 禁止任何英文回答！你的回复必须100%使用中文！\n"
+        "1. 直接输出最终结果，不输出任何分析过程、思考步骤或多余解释。\n"
+        "2. 【语言强制规定】：除了情绪标签必须是指定的英文单词外，你的回复必须全部使用纯中文！绝对不允许在回复中夹杂任何英文单词！\n"
+        "3. 你的输出必须只有两行，严格按照以下格式：\n"
         "情绪：[只能从 Happy, Sad, Angry, Neutral, Surprise, Fear 中选一个]\n"
-        "回复：[你的纯中文共情回复，像真人一样自然流畅]\n\n"
-        "【正确输出示例】：\n"
+        "回复：[你的纯中文共情回复]\n\n"
+        "【正确示例】：\n"
         "情绪：Happy\n"
         "回复：很高兴认识你！听到你分享自己喜欢的唱跳和篮球，感觉你非常有活力呢，今天是有什么开心的事情想跟我分享吗？"
     )
@@ -78,7 +78,9 @@ def generate_empathetic_response(user_text: str, visual_emotion: str, audio_emot
             max_new_tokens=LLM_MAX_LENGTH,
             temperature=LLM_TEMPERATURE,
             top_p=0.8,
-            repetition_penalty=1.05
+            repetition_penalty=1.05,
+            do_sample=True,                      # 🌟 修复 1：强制开启采样模式
+            pad_token_id=tokenizer.eos_token_id  # 🌟 修复 2：消除日志里的烦人警告
         )
 
     generated_ids = [
@@ -90,19 +92,35 @@ def generate_empathetic_response(user_text: str, visual_emotion: str, audio_emot
     llm_emotion = "Neutral"  # 默认值
     response_text = raw_output  # 如果解析失败，返回全部原始文本
 
+    # 调试日志：输出原始结果
+    print(f"📝 [LLM模块] 模型原始输出:\n{raw_output}\n{'='*50}")
+
     try:
         # 使用正则提取"情绪："和"回复："后面的内容
-        emotion_match = re.search(r"情绪：\s*([A-Za-z]+)", raw_output)
-        reply_match = re.search(r"回复：\s*(.*)", raw_output, re.DOTALL)
+        emotion_match = re.search(r"情绪[:：]\s*([A-Za-z]+)", raw_output)
+        reply_match = re.search(r"回复[:：]\s*(.*)", raw_output, re.DOTALL)
 
         if emotion_match:
             parsed_emotion = emotion_match.group(1).capitalize()
             # 确保提取出的情绪在我们的六个目标情绪内
             if parsed_emotion in ["Happy", "Sad", "Angry", "Neutral", "Surprise", "Fear"]:
                 llm_emotion = parsed_emotion
+            print(f"✅ [LLM模块] 解析情绪: {llm_emotion}")
+        else:
+            print(f"⚠️ [LLM模块] 未找到情绪标签")
 
         if reply_match:
             response_text = reply_match.group(1).strip()
+            print(f"✅ [LLM模块] 解析回复: {response_text}")
+        else:
+            print(f"⚠️ [LLM模块] 未找到回复标签")
+            # 如果解析失败，使用原始输出作为回复（过滤掉分析步骤）
+            lines = raw_output.split('\n')
+            filtered_lines = [line for line in lines if line and not any(keyword in line for keyword in ['情绪', '回复', '分析', '思考', '步骤', 'Emotion', 'Response'])]
+            if filtered_lines:
+                response_text = '\n'.join(filtered_lines[:3]).strip()  # 取前几行
+            else:
+                response_text = raw_output
 
     except Exception as e:
         print(f"⚠️ [LLM模块] 解析模型输出失败: {e}\n原始输出: {raw_output}")

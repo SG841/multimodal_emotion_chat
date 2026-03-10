@@ -438,11 +438,11 @@ class EmotionChatInterface:
                 llm_emotion = "Neutral"
                 response_text = f"我感受到了你的情绪变化。你说：{user_text}"
 
-            # 生成融合显示文本（仅显示多模态参考信息）
-            fusion_text = f"多模态参考信息：\n"
-            fusion_text += f"视觉检测: {visual_decision}\n"
-            fusion_text += f"音频情感: {audio_emotion} ({audio_confidence:.0%})\n"
-            fusion_text += f"大模型最终决策: {llm_emotion}"
+            # 生成融合显示文本（显示多模态参考信息 + 最终情感判定）
+            fusion_text = f"多模态情感分析结果：\n"
+            fusion_text += f"📷 视觉检测: {visual_decision}\n"
+            fusion_text += f"🎤 音频情感: {audio_emotion}\n"
+            fusion_text += f"🧠 大模型最终判定: {llm_emotion}"
 
             # 更新对话历史 (Gradio 6.0+ 格式: 使用 role 和 content)
             self.chat_history.append({"role": "user", "content": user_text})
