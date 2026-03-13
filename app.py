@@ -76,6 +76,9 @@ class EmotionChatInterface:
         self.recording_emotion_buffer = [] # 录音期间的情感缓冲区
         self.last_proc_time = 0          # 【频率控制】记录上次处理时间戳
 
+        # === 用户登录状态 ===
+        self.current_user = None  # 当前登录的用户名
+
         # 创建界面
         self.create_interface()
 
@@ -83,150 +86,227 @@ class EmotionChatInterface:
         """创建 Gradio 界面"""
         with gr.Blocks(title="多模态情感感知共情对话系统") as self.interface:
 
-            # 标题栏
-            gr.Markdown(
-                """
-                # 🤖 多模态情感感知共情对话系统
+            # ===== 登录/注册区域 (初始显示) =====
+            with gr.Column(visible=True) as self.login_area:
+                gr.Markdown("# 🔑 系统登录")
+                gr.Markdown("请登录或注册以使用多模态情感感知共情对话系统")
 
-                基于视觉与听觉的情感识别 + 大语言模型共情对话
-                """
-            )
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        pass  # 左侧留白
 
-            # 主布局：左侧感知区，右侧交互区
-            with gr.Row():
-                # ===== 左侧：感知区域 =====
-                with gr.Column(scale=3):
-                    gr.Markdown("### 👁️ 视觉感知区")
+                    with gr.Column(scale=2):
+                        self.user_input = gr.Textbox(
+                            label="用户名",
+                            placeholder="请输入用户名",
+                            max_lines=1
+                        )
+                        self.pass_input = gr.Textbox(
+                            label="密码",
+                            placeholder="请输入密码",
+                            type="password",
+                            max_lines=1
+                        )
 
-                    # 摄像头视频流 - 强制低分辨率采集 (320x240 减少带宽)
-                    # 注意: height/width 参数会影响 getUserMedia 约束
-                    self.video_input = gr.Image(
-                        sources=["webcam"],
-                        # streaming=True,
-                        label="实时视频流",
-                        elem_id="video-stream",
-                        # height=240,   # 强制采集高度 240
-                        # width=320     # 强制采集宽度 320
-                    )
+                        with gr.Row():
+                            self.login_btn = gr.Button("登录", variant="primary", scale=2)
+                            self.reg_btn = gr.Button("注册", variant="secondary", scale=1)
 
-                    # 情绪状态显示卡片
-                    with gr.Row():
-                        with gr.Column():
-                            self.emotion_display = gr.Textbox(
-                                label="当前识别情绪",
-                                value="等待中...",
-                                interactive=False,
-                                elem_id="emotion-display"
+                        self.auth_msg = gr.Markdown("")
+
+                    with gr.Column(scale=1):
+                        pass  # 右侧留白
+
+            # ===== 主交互区域 (初始隐藏) =====
+            with gr.Column(visible=False) as self.main_area:
+                # 欢迎信息
+                self.welcome_display = gr.Markdown("### 欢迎使用系统")
+
+                # 标题栏
+                gr.Markdown(
+                    """
+                    # 🤖 多模态情感感知共情对话系统
+
+                    基于视觉与听觉的情感识别 + 大语言模型共情对话
+                    """
+                )
+
+                # 主布局：左侧感知区，右侧交互区
+                with gr.Row():
+                    # ===== 左侧：感知区域 =====
+                    with gr.Column(scale=3):
+                        gr.Markdown("### 👁️ 视觉感知区")
+
+                        # 摄像头视频流 - 强制低分辨率采集 (320x240 减少带宽)
+                        # 注意: height/width 参数会影响 getUserMedia 约束
+                        self.video_input = gr.Image(
+                            sources=["webcam"],
+                            # streaming=True,
+                            label="实时视频流",
+                            elem_id="video-stream",
+                            # height=240,   # 强制采集高度 240
+                            # width=320     # 强制采集宽度 320
+                        )
+
+                        # 情绪状态显示卡片
+                        with gr.Row():
+                            with gr.Column():
+                                self.emotion_display = gr.Textbox(
+                                    label="当前识别情绪",
+                                    value="等待中...",
+                                    interactive=False,
+                                    elem_id="emotion-display"
+                                )
+                            with gr.Column():
+                                self.confidence_display = gr.Textbox(
+                                    label="视觉置信度",
+                                    value="--",
+                                    interactive=False
+                                )
+
+                        # 情绪进度条可视化
+                        self.emotion_bars = gr.HTML(
+                            value=self._get_empty_emotion_bars(),
+                            label="情绪概率分布"
+                        )
+
+                        # 视觉状态统计
+                        with gr.Row():
+                            self.frame_count = gr.Number(
+                                label="已处理帧数",
+                                value=0,
+                                interactive=False
                             )
-                        with gr.Column():
-                            self.confidence_display = gr.Textbox(
-                                label="视觉置信度",
+                            self.last_update = gr.Textbox(
+                                label="最后更新时间",
                                 value="--",
                                 interactive=False
                             )
 
-                    # 情绪进度条可视化
-                    self.emotion_bars = gr.HTML(
-                        value=self._get_empty_emotion_bars(),
-                        label="情绪概率分布"
-                    )
+                    # ===== 右侧：交互区域 =====
+                    with gr.Column(scale=2):
+                        gr.Markdown("### 💬 对话交互区")
 
-                    # 视觉状态统计
-                    with gr.Row():
-                        self.frame_count = gr.Number(
-                            label="已处理帧数",
-                            value=0,
+                        # 对话历史记录
+                        self.chat_display = gr.Chatbot(
+                            label="对话历史",
+                            height=300,
+                            avatar_images=(
+                                None,  # 用户头像
+                                "🤖"  # 系统头像（显示有问题）
+                            )
+                        )
+
+                        # 语音输入区域
+                        with gr.Row():
+                            self.audio_input = gr.Audio(
+                                sources=["microphone"],
+                                type="filepath",  # 返回文件路径
+                                label="语音输入"
+                            )
+                            self.recording_status = gr.Textbox(
+                                value="点击录音开始说话...",
+                                interactive=False,
+                                scale=2
+                            )
+
+                        # 文本显示（语音识别结果）
+                        self.recognized_text = gr.Textbox(
+                            label="语音识别结果",
+                            placeholder="您的语音将在这里显示...",
+                            lines=2,
                             interactive=False
                         )
-                        self.last_update = gr.Textbox(
-                            label="最后更新时间",
-                            value="--",
-                            interactive=False
+
+                        # 语音播放区域
+                        self.audio_output = gr.Audio(
+                            label="系统回复语音",
+                            autoplay=True
                         )
 
-                # ===== 右侧：交互区域 =====
-                with gr.Column(scale=2):
-                    gr.Markdown("### 💬 对话交互区")
+                        # 操作按钮
+                        with gr.Row():
+                            self.clear_btn = gr.Button("清空对话", variant="secondary")
+                            self.example_btn = gr.Button("示例对话", variant="secondary")
 
-                    # 对话历史记录
-                    self.chat_display = gr.Chatbot(
-                        label="对话历史",
-                        height=300,
-                        avatar_images=(
-                            None,  # 用户头像
-                            "🤖"  # 系统头像（显示有问题）
-                        )
-                    )
+                # ===== 底部：系统监控区域 =====
+                gr.Markdown("### 📊 系统监控日志")
 
-                    # 语音输入区域
-                    with gr.Row():
-                        self.audio_input = gr.Audio(
-                            sources=["microphone"],
-                            type="filepath",  # 返回文件路径
-                            label="语音输入"
-                        )
-                        self.recording_status = gr.Textbox(
-                            value="点击录音开始说话...",
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        # 融合决策显示
+                        self.fusion_display = gr.Textbox(
+                            label="多模态参考信息",
+                            value="等待数据...",
                             interactive=False,
-                            scale=2
+                            lines=4
                         )
 
-                    # 文本显示（语音识别结果）
-                    self.recognized_text = gr.Textbox(
-                        label="语音识别结果",
-                        placeholder="您的语音将在这里显示...",
-                        lines=2,
-                        interactive=False
-                    )
-
-                    # 语音播放区域
-                    self.audio_output = gr.Audio(
-                        label="系统回复语音",
-                        autoplay=True
-                    )
-
-                    # 操作按钮
-                    with gr.Row():
-                        self.clear_btn = gr.Button("清空对话", variant="secondary")
-                        self.example_btn = gr.Button("示例对话", variant="secondary")
-
-            # ===== 底部：系统监控区域 =====
-            gr.Markdown("### 📊 系统监控日志")
-
-            with gr.Row():
-                with gr.Column(scale=1):
-                    # 融合决策显示
-                    self.fusion_display = gr.Textbox(
-                        label="多模态参考信息",
-                        value="等待数据...",
-                        interactive=False,
-                        lines=4
-                    )
-
-                with gr.Column(scale=2):
-                    # 系统日志
-                    self.log_display = gr.Textbox(
-                        label="系统运行日志",
-                        value="系统初始化完成...",
-                        interactive=False,
-                        lines=8,
-                        max_lines=10,
-                        autoscroll=True
-                    )
-
-                    # 性能指标
-                    with gr.Row():
-                        self.gpu_memory = gr.Textbox(
-                            label="GPU 显存占用",
-                            value="-- MB",
-                            interactive=False
+                    with gr.Column(scale=2):
+                        # 系统日志
+                        self.log_display = gr.Textbox(
+                            label="系统运行日志",
+                            value="系统初始化完成...",
+                            interactive=False,
+                            lines=8,
+                            max_lines=10,
+                            autoscroll=True
                         )
+
+                        # 性能指标
+                        with gr.Row():
+                            self.gpu_memory = gr.Textbox(
+                                label="GPU 显存占用",
+                                value="-- MB",
+                                interactive=False
+                            )
 
             # 绑定事件
             self._bind_events()
 
     def _bind_events(self):
         """绑定界面事件 - 开启并发与异步通道"""
+
+        # ===== 登录/注册事件 =====
+        def perform_login(username, password):
+            """处理登录"""
+            from utils.auth_json import login_user
+
+            if login_user(username, password):
+                self.current_user = username
+                return (
+                    gr.update(visible=False),  # 隐藏登录区
+                    gr.update(visible=True),   # 显示主区
+                    f"### 欢迎回来，{username} 👋",  # 更新欢迎信息
+                    ""  # 清空错误消息
+                )
+            else:
+                return (
+                    gr.update(visible=True),   # 保持登录区显示
+                    gr.update(visible=False),  # 保持主区隐藏
+                    "",  # 不更新欢迎信息
+                    "❌ 用户名或密码错误，请重试"  # 显示错误
+                )
+
+        def perform_register(username, password):
+            """处理注册"""
+            from utils.auth_json import register_user
+            result = register_user(username, password)
+            return result
+
+        self.login_btn.click(
+            fn=perform_login,
+            inputs=[self.user_input, self.pass_input],
+            outputs=[self.login_area, self.main_area, self.welcome_display, self.auth_msg]
+        )
+
+        self.reg_btn.click(
+            fn=perform_register,
+            inputs=[self.user_input, self.pass_input],
+            outputs=[self.auth_msg]
+        )
+
+        # ===== 主界面事件 =====
 
         # 视频流：高频预测 + 录音期间数据累积
         self.video_input.stream(
