@@ -362,7 +362,8 @@ class EmotionChatInterface:
 
         # 示例对话按钮
         self.example_btn.click(
-            fn=self.show_example
+            fn=self.show_example,
+            outputs=[self.chat_display] # 明确指向聊天显示组件
         )
 
     def handle_recording_start(self):
@@ -591,7 +592,7 @@ class EmotionChatInterface:
             {"role": "assistant", "content": "老板不断给你增加任务确实会让人感到疲惫和焦虑。你有没有尝试过和老板沟通这个问题？"},
         ]
         self.chat_history = example_history
-        self.chat_display.value = example_history
+        return example_history
 
     def _get_empty_emotion_bars(self) -> str:
         """获取空的情绪条HTML"""
