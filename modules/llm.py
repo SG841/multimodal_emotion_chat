@@ -43,9 +43,6 @@ def generate_empathetic_response(user_text: str, visual_emotion: str, audio_emot
 
     messages = [
         {"role": "system", "content": system_prompt},
-        # 极简打样
-        {"role": "user", "content": "（后台参考数据：视觉检测为 Neutral，语音情感为 Sad，系统初步判定为 Sad。）\n\n用户说：我最近压力真的很大，天天失眠。"},
-        {"role": "assistant", "content": '{"emotion": "Sad", "response": "听到你最近因为压力大而失眠，我感到很心疼。长期休息不好身体肯定吃不消，能跟我具体说说是什么让你这么有压力吗？"}'}
     ]
 
     for msg in chat_history:
