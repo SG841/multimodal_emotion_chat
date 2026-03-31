@@ -2,13 +2,13 @@
 gradio==6.9.0
 gradio_client==2.3.0
 
-# PyTorch 生态 (兼容 CUDA 12.1，解开 Transformers 的封印)
-torch==2.5.1+cu121
-torchvision==0.20.1+cu121
-torchaudio==2.5.1+cu121
+# PyTorch 生态 (删掉 +cu121，安装时通过命令行指定源)
+torch==2.5.1
+torchvision==0.20.1
+torchaudio==2.5.1
 
-# 视觉感知模块
-transformers==5.3.0
+# 视觉感知模块 (修正版本号以适配 Qwen 3.5)
+transformers>=4.48.0
 opencv-python-headless==4.11.0.86
 numpy==1.26.4
 pillow==11.3.0
@@ -21,22 +21,16 @@ av==16.1.0
 funasr==1.3.1
 modelscope==1.34.0
 
-# LLM 显存分配核心加速器 (必须)
-accelerate==1.13.0
+# LLM 显存分配核心加速器
+accelerate>=1.1.0
 
-# 硬件监控 (已确认在此环境下完美运行)
+# 其他保持不变...
 nvidia-ml-py==13.590.48
-
-# Web 服务
 fastapi==0.135.1
 uvicorn==0.41.0
-
-# HuggingFace 生态
-huggingface_hub==1.6.0
-tokenizers==0.22.2
-safetensors==0.7.0
-
-# 其他工具
+huggingface_hub>=0.28.0
+tokenizers>=0.21.0
+safetensors>=0.5.0
 pydub==0.25.1
 pydantic==2.12.5
 requests==2.32.5
@@ -44,6 +38,4 @@ ffmpy==1.0.0
 Jinja2==3.1.6
 PyYAML==6.0.3
 tqdm==4.67.1
-
-# TTS 语音合成
 edge-tts==7.2.7
