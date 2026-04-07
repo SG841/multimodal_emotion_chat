@@ -36,6 +36,7 @@ def init_db():
         """CREATE TABLE IF NOT EXISTS user_profiles (
         user_id INTEGER PRIMARY KEY,
         nickname TEXT,
+        bio TEXT DEFAULT '',
         preferred_tts_voice TEXT DEFAULT 'zh-CN-XiaoxiaoNeural',
         FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     )"""
@@ -92,6 +93,12 @@ def init_db():
     if "role" not in user_columns:
         cursor.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'")
 
+    profile_columns = [row["name"] for row in cursor.execute("PRAGMA table_info(user_profiles)").fetchall()]
+    if "bio" not in profile_columns:
+        cursor.execute("ALTER TABLE user_profiles ADD COLUMN bio TEXT DEFAULT ''")
+    if "preferred_tts_voice" not in profile_columns:
+        cursor.execute("ALTER TABLE user_profiles ADD COLUMN preferred_tts_voice TEXT DEFAULT 'zh-CN-XiaoxiaoNeural'")
+
     metric_columns = [row["name"] for row in cursor.execute("PRAGMA table_info(system_metrics)").fetchall()]
     if "user_id" not in metric_columns:
         cursor.execute("ALTER TABLE system_metrics ADD COLUMN user_id INTEGER")
@@ -126,7 +133,7 @@ def register_user(username, password, role="user", invite_code=None):
         )
         user_id = cur.lastrowid
         cur.execute(
-            "INSERT INTO user_profiles (user_id, nickname) VALUES (?, ?)",
+            "INSERT INTO user_profiles (user_id, nickname, bio, preferred_tts_voice) VALUES (?, ?, '', 'zh-CN-XiaoxiaoNeural')",
             (user_id, f"用户_{username}"),
         )
         conn.commit()
@@ -152,6 +159,44 @@ def login_user(username, password, expected_role=None):
     if expected_role and role != expected_role:
         return False, None, None
     return True, user["id"], role
+
+
+def get_user_profile(user_id):
+    conn = get_connection()
+    profile = conn.execute(
+        """SELECT u.username, u.role, up.nickname, up.bio, up.preferred_tts_voice
+        FROM users u
+        JOIN user_profiles up ON u.id = up.user_id
+        WHERE u.id=?""",
+        (user_id,),
+    ).fetchone()
+    conn.close()
+    if not profile:
+        return None
+    return {
+        "username": profile["username"],
+        "role": profile["role"],
+        "nickname": profile["nickname"] or "",
+        "bio": profile["bio"] or "",
+        "preferred_tts_voice": profile["preferred_tts_voice"] or "zh-CN-XiaoxiaoNeural",
+    }
+
+
+def update_user_profile(user_id, nickname, bio, preferred_tts_voice):
+    if not nickname:
+        return False, "昵称不能为空"
+    conn = get_connection()
+    exists = conn.execute("SELECT id FROM users WHERE id=?", (user_id,)).fetchone()
+    if not exists:
+        conn.close()
+        return False, "用户不存在"
+    conn.execute(
+        "UPDATE user_profiles SET nickname=?, bio=?, preferred_tts_voice=? WHERE user_id=?",
+        (nickname.strip(), (bio or "").strip(), preferred_tts_voice, user_id),
+    )
+    conn.commit()
+    conn.close()
+    return True, "个性化设置已保存"
 
 
 def create_session(user_id):
@@ -257,10 +302,7 @@ def change_password(user_id, old_password, new_password):
         return False, "新密码长度不能小于 4 位"
 
     conn = get_connection()
-    user = conn.execute(
-        "SELECT password_hash FROM users WHERE id=?",
-        (user_id,),
-    ).fetchone()
+    user = conn.execute("SELECT password_hash FROM users WHERE id=?", (user_id,)).fetchone()
     if not user:
         conn.close()
         return False, "用户不存在"
@@ -268,10 +310,7 @@ def change_password(user_id, old_password, new_password):
         conn.close()
         return False, "原密码错误"
 
-    conn.execute(
-        "UPDATE users SET password_hash=? WHERE id=?",
-        (hash_password(new_password), user_id),
-    )
+    conn.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_password(new_password), user_id))
     conn.commit()
     conn.close()
     return True, "密码修改成功"
@@ -287,10 +326,7 @@ def admin_reset_password(target_user_id, new_password):
         conn.close()
         return False, "目标用户不存在"
 
-    conn.execute(
-        "UPDATE users SET password_hash=? WHERE id=?",
-        (hash_password(new_password), target_user_id),
-    )
+    conn.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_password(new_password), target_user_id))
     conn.commit()
     conn.close()
     return True, f"已成功修改用户 {target_user_id} 的密码"
@@ -332,22 +368,13 @@ def get_user_activity_summary(user_id):
         conn.close()
         return "未找到该用户"
 
-    session_count = conn.execute(
-        "SELECT COUNT(*) AS count FROM sessions WHERE user_id=?",
-        (user_id,),
-    ).fetchone()["count"]
+    session_count = conn.execute("SELECT COUNT(*) AS count FROM sessions WHERE user_id=?", (user_id,)).fetchone()["count"]
     message_count = conn.execute(
         "SELECT COUNT(*) AS count FROM messages m JOIN sessions s ON m.session_id=s.id WHERE s.user_id=?",
         (user_id,),
     ).fetchone()["count"]
-    latest_session = conn.execute(
-        "SELECT start_time FROM sessions WHERE user_id=? ORDER BY id DESC LIMIT 1",
-        (user_id,),
-    ).fetchone()
-    latest_metric = conn.execute(
-        "SELECT timestamp FROM system_metrics WHERE user_id=? ORDER BY id DESC LIMIT 1",
-        (user_id,),
-    ).fetchone()
+    latest_session = conn.execute("SELECT start_time FROM sessions WHERE user_id=? ORDER BY id DESC LIMIT 1", (user_id,)).fetchone()
+    latest_metric = conn.execute("SELECT timestamp FROM system_metrics WHERE user_id=? ORDER BY id DESC LIMIT 1", (user_id,)).fetchone()
     conn.close()
 
     latest_session_text = latest_session["start_time"] if latest_session else "无"

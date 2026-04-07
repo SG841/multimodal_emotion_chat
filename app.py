@@ -13,6 +13,16 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from config import ADMIN_INVITE_CODE
 from utils import db_manager
 
+USER_ACTIONS = ["个性化设置", "修改密码", "退出账号"]
+TTS_VOICE_OPTIONS = [
+    "zh-CN-XiaoxiaoNeural",
+    "zh-CN-YunxiNeural",
+    "zh-CN-YunyangNeural",
+    "zh-CN-XiaoyiNeural",
+    "zh-CN-liaoning-XiaobeiNeural",
+    "zh-CN-shaanxi-XiaoniNeural",
+]
+
 try:
     from modules.vision import predict_emotion
     VISION_AVAILABLE = True
@@ -54,6 +64,7 @@ class SystemInterface:
         self.current_user_id = None
         self.current_username = None
         self.current_session_id = None
+        self.current_user_profile = None
 
         self.current_emotion = "Neutral"
         self.visual_confidence = 0.0
@@ -74,6 +85,17 @@ class SystemInterface:
 
     def _admin_user_choices(self):
         return db_manager.get_user_choices(include_admin=True)
+
+    def _load_current_profile(self):
+        if self.current_user_id is None:
+            self.current_user_profile = None
+            return None
+        self.current_user_profile = db_manager.get_user_profile(self.current_user_id)
+        return self.current_user_profile
+
+    def _current_voice(self):
+        profile = self.current_user_profile or self._load_current_profile() or {}
+        return profile.get("preferred_tts_voice", TTS_VOICE_OPTIONS[0])
 
     def _log_user_event(self, module_name, info, session_id=None):
         if self.current_user_id is None:
@@ -112,9 +134,7 @@ class SystemInterface:
         """
 
     def _get_empty_emotion_bars(self) -> str:
-        emotions = list(self.last_emotion_probs.keys()) if self.last_emotion_probs else [
-            "Happy", "Sad", "Angry", "Neutral", "Surprise", "Fear"
-        ]
+        emotions = list(self.last_emotion_probs.keys()) if self.last_emotion_probs else ["Happy", "Sad", "Angry", "Neutral", "Surprise", "Fear"]
         colors = ["#4CAF50", "#2196F3", "#F44336", "#9E9E9E", "#FF9800", "#9C27B0"]
         html = "<div style='margin: 10px 0;'>"
         for i, emotion in enumerate(emotions):
@@ -162,20 +182,10 @@ class SystemInterface:
                     with gr.Column(scale=1):
                         pass
                     with gr.Column(scale=2):
-                        self.auth_mode = gr.Radio(
-                            choices=["用户登录", "管理员登录", "用户注册", "管理员注册"],
-                            value="用户登录",
-                            label="操作类型"
-                        )
+                        self.auth_mode = gr.Radio(["用户登录", "管理员登录", "用户注册", "管理员注册"], value="用户登录", label="操作类型")
                         self.login_user = gr.Textbox(label="用户名", placeholder="请输入用户名", max_lines=1)
                         self.login_pwd = gr.Textbox(label="密码", placeholder="请输入密码", type="password", max_lines=1)
-                        self.invite_code = gr.Textbox(
-                            label="管理员邀请码",
-                            placeholder="仅管理员注册需要填写",
-                            type="password",
-                            max_lines=1,
-                            visible=False
-                        )
+                        self.invite_code = gr.Textbox(label="管理员邀请码", placeholder="仅管理员注册需要填写", type="password", visible=False)
                         self.btn_auth = gr.Button("安全登录", variant="primary")
                         self.login_msg = gr.Markdown("")
                     with gr.Column(scale=1):
@@ -184,7 +194,6 @@ class SystemInterface:
             with gr.Column(visible=False) as self.user_page:
                 with gr.Row():
                     self.user_header_msg = gr.Markdown("### 欢迎使用系统")
-                    self.btn_user_logout = gr.Button("退出账号", size="sm", variant="stop")
 
                 with gr.Row():
                     with gr.Column(scale=1, variant="panel"):
@@ -195,12 +204,31 @@ class SystemInterface:
                         self.btn_export = gr.Button("导出聊天记录")
                         self.export_file = gr.File(label="下载文件", interactive=False)
 
-                        gr.Markdown("### 修改密码")
-                        self.user_old_password = gr.Textbox(label="原密码", type="password")
-                        self.user_new_password = gr.Textbox(label="新密码", type="password")
-                        self.user_confirm_password = gr.Textbox(label="确认新密码", type="password")
-                        self.user_change_pwd_btn = gr.Button("修改我的密码", variant="secondary")
-                        self.user_password_msg = gr.Markdown("")
+                        with gr.Accordion("账户操作", open=False):
+                            self.user_action_menu = gr.Radio(USER_ACTIONS, value="个性化设置", label="请选择操作")
+
+                        with gr.Column(visible=True) as self.user_profile_panel:
+                            gr.Markdown("### 个性化设置")
+                            self.user_profile_username = gr.Textbox(label="当前用户名", interactive=False)
+                            self.user_nickname = gr.Textbox(label="昵称")
+                            self.user_bio = gr.Textbox(label="个人资料", lines=4, placeholder="介绍一下自己或写下你的偏好")
+                            self.user_voice = gr.Dropdown(TTS_VOICE_OPTIONS, label="偏好音色", value=TTS_VOICE_OPTIONS[0], interactive=True)
+                            self.user_profile_save_btn = gr.Button("保存个性化设置", variant="secondary")
+                            self.user_profile_msg = gr.Markdown("")
+
+                        with gr.Column(visible=False) as self.user_password_panel:
+                            gr.Markdown("### 修改密码")
+                            self.user_old_password = gr.Textbox(label="原密码", type="password")
+                            self.user_new_password = gr.Textbox(label="新密码", type="password")
+                            self.user_confirm_password = gr.Textbox(label="确认新密码", type="password")
+                            self.user_change_pwd_btn = gr.Button("修改我的密码", variant="secondary")
+                            self.user_password_msg = gr.Markdown("")
+
+                        with gr.Column(visible=False) as self.user_logout_panel:
+                            gr.Markdown("### 退出账号")
+                            gr.Markdown("点击下方按钮退出当前账号并返回登录界面。")
+                            self.btn_user_logout = gr.Button("退出账号", variant="stop")
+                            self.user_logout_msg = gr.Markdown("")
 
                     with gr.Column(scale=3):
                         gr.Markdown("### 视觉感知区")
@@ -296,20 +324,26 @@ class SystemInterface:
 
         def refresh_admin_panels(message=""):
             user_choices = self._admin_user_choices()
+            return gr.update(value=db_manager.get_all_users_for_admin()), gr.update(choices=user_choices), gr.update(choices=user_choices), message
+
+        def get_user_panel_updates(action):
             return (
-                gr.update(value=db_manager.get_all_users_for_admin()),
-                gr.update(choices=user_choices),
-                gr.update(choices=user_choices),
-                message,
+                gr.update(visible=action == "个性化设置"),
+                gr.update(visible=action == "修改密码"),
+                gr.update(visible=action == "退出账号"),
+            )
+
+        def load_user_preferences():
+            profile = self._load_current_profile() or {}
+            return (
+                profile.get("username", self.current_username or ""),
+                profile.get("nickname", ""),
+                profile.get("bio", ""),
+                profile.get("preferred_tts_voice", TTS_VOICE_OPTIONS[0]),
             )
 
         def handle_auth(mode, username, password, invite_code):
-            role_map = {
-                "用户登录": "user",
-                "管理员登录": "admin",
-                "用户注册": "user",
-                "管理员注册": "admin",
-            }
+            role_map = {"用户登录": "user", "管理员登录": "admin", "用户注册": "user", "管理员注册": "admin"}
             target_role = role_map[mode]
             is_register = "注册" in mode
 
@@ -320,6 +354,7 @@ class SystemInterface:
                     gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
                     msg, gr.update(), gr.update(), gr.update(), admin_table,
                     admin_selector, admin_password_user, admin_message,
+                    gr.update(), gr.update(), gr.update(), gr.update(),
                 )
 
             success, uid, role = db_manager.login_user(username, password, expected_role=target_role)
@@ -328,10 +363,12 @@ class SystemInterface:
                     gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
                     "账号、密码或登录类型不正确，请检查后重试", gr.update(), gr.update(), gr.update(), gr.update(),
                     gr.update(), gr.update(), gr.update(),
+                    gr.update(), gr.update(), gr.update(), gr.update(),
                 )
 
             self.current_username = username
             self.current_user_id = uid
+            self._load_current_profile()
 
             if role == "user":
                 self.current_session_id = db_manager.create_session(uid)
@@ -339,11 +376,13 @@ class SystemInterface:
                 sessions_map = db_manager.get_user_sessions(uid)
                 session_choices = list(sessions_map.keys())
                 self._log_user_event("auth", f"用户 {username} 登录成功并创建默认会话", self.current_session_id)
+                profile_username, nickname, bio, voice = load_user_preferences()
                 return (
                     gr.update(visible=False), gr.update(visible=True), gr.update(visible=False),
                     "", f"### 欢迎回来，{username}", gr.update(),
                     gr.update(choices=session_choices, value=session_choices[0] if session_choices else None), gr.update(),
                     gr.update(), gr.update(), gr.update(),
+                    profile_username, nickname, bio, voice,
                 )
 
             admin_table, admin_selector, admin_password_user, admin_message = refresh_admin_panels("管理员登录成功")
@@ -351,6 +390,7 @@ class SystemInterface:
                 gr.update(visible=False), gr.update(visible=False), gr.update(visible=True),
                 "", gr.update(), "### 超级管理员后台授权成功",
                 gr.update(), admin_table, admin_selector, admin_password_user, admin_message,
+                gr.update(), gr.update(), gr.update(), gr.update(),
             )
 
         def handle_new_session():
@@ -363,9 +403,7 @@ class SystemInterface:
             return gr.update(choices=session_choices, value=session_choices[0]), self.chat_history, "", None, "对话已清空"
 
         def show_example():
-            example_history = [
-                ("我最近工作压力很大", "听起来你最近承受了不少压力。如果你愿意，可以和我说说最困扰你的是什么。"),
-            ]
+            example_history = [("我最近工作压力很大", "听起来你最近承受了不少压力。如果你愿意，可以和我说说最困扰你的是什么。")]
             self.chat_history = example_history
             return example_history
 
@@ -392,6 +430,21 @@ class SystemInterface:
                 self._log_user_event("password", "用户修改了自己的密码", self.current_session_id)
             return msg
 
+        def handle_save_profile(nickname, bio, voice):
+            success, msg = db_manager.update_user_profile(self.current_user_id, nickname, bio, voice)
+            if success:
+                self._load_current_profile()
+                self._log_user_event("profile", f"用户更新了个性化设置，音色={voice}", self.current_session_id)
+            return msg
+
+        def handle_user_logout():
+            self.current_user_id = None
+            self.current_username = None
+            self.current_session_id = None
+            self.current_user_profile = None
+            self.chat_history = []
+            return gr.update(visible=True), gr.update(visible=False), "已退出当前账号"
+
         def handle_admin_delete(uid):
             result = db_manager.admin_delete_user(uid)
             admin_table, admin_selector, admin_password_user, _ = refresh_admin_panels()
@@ -414,15 +467,9 @@ class SystemInterface:
             user_id = db_manager.parse_user_choice(user_choice)
             if user_id is None:
                 return "请选择一个用户", "暂无监控日志", self._get_gpu_mem()
-            summary = db_manager.get_user_activity_summary(user_id)
-            logs = db_manager.get_user_metrics(user_id)
-            return summary, logs, self._get_gpu_mem()
+            return db_manager.get_user_activity_summary(user_id), db_manager.get_user_metrics(user_id), self._get_gpu_mem()
 
-        self.auth_mode.change(
-            update_auth_form,
-            inputs=[self.auth_mode],
-            outputs=[self.invite_code, self.btn_auth, self.login_msg],
-        )
+        self.auth_mode.change(update_auth_form, inputs=[self.auth_mode], outputs=[self.invite_code, self.btn_auth, self.login_msg])
         self.btn_auth.click(
             handle_auth,
             [self.auth_mode, self.login_user, self.login_pwd, self.invite_code],
@@ -431,48 +478,26 @@ class SystemInterface:
                 self.login_msg, self.user_header_msg, self.admin_header_msg,
                 self.session_dropdown, self.admin_user_table,
                 self.admin_user_selector, self.admin_password_user, self.admin_password_msg,
+                self.user_profile_username, self.user_nickname, self.user_bio, self.user_voice,
             ],
         )
 
-        self.btn_user_logout.click(
-            lambda: (gr.update(visible=True), gr.update(visible=False)),
-            outputs=[self.login_page, self.user_page],
-        )
-        self.btn_admin_logout.click(
-            lambda: (gr.update(visible=True), gr.update(visible=False)),
-            outputs=[self.login_page, self.admin_page],
-        )
+        self.user_action_menu.change(get_user_panel_updates, inputs=[self.user_action_menu], outputs=[self.user_profile_panel, self.user_password_panel, self.user_logout_panel])
+        self.btn_user_logout.click(handle_user_logout, outputs=[self.login_page, self.user_page, self.user_logout_msg])
+        self.btn_admin_logout.click(lambda: (gr.update(visible=True), gr.update(visible=False)), outputs=[self.login_page, self.admin_page])
 
         self.btn_new_session.click(handle_new_session, outputs=[self.session_dropdown, self.chat_display, self.recognized_text, self.sys_audio_output, self.log_display])
         self.clear_btn.click(handle_new_session, outputs=[self.session_dropdown, self.chat_display, self.recognized_text, self.sys_audio_output, self.log_display])
         self.example_btn.click(show_example, outputs=[self.chat_display])
         self.session_dropdown.change(handle_load_session, inputs=[self.session_dropdown], outputs=[self.chat_display])
         self.btn_export.click(handle_export, outputs=[self.export_file])
-        self.user_change_pwd_btn.click(
-            handle_user_change_password,
-            inputs=[self.user_old_password, self.user_new_password, self.user_confirm_password],
-            outputs=[self.user_password_msg],
-        )
+        self.user_change_pwd_btn.click(handle_user_change_password, inputs=[self.user_old_password, self.user_new_password, self.user_confirm_password], outputs=[self.user_password_msg])
+        self.user_profile_save_btn.click(handle_save_profile, inputs=[self.user_nickname, self.user_bio, self.user_voice], outputs=[self.user_profile_msg])
 
-        self.admin_refresh_btn.click(
-            lambda: db_manager.get_all_users_for_admin(),
-            outputs=[self.admin_user_table],
-        )
-        self.admin_delete_btn.click(
-            handle_admin_delete,
-            inputs=[self.admin_target_id],
-            outputs=[self.admin_user_table, self.admin_msg, self.admin_user_selector, self.admin_password_user],
-        )
-        self.admin_refresh_monitor_btn.click(
-            handle_admin_monitor,
-            inputs=[self.admin_user_selector],
-            outputs=[self.admin_user_summary, self.admin_user_logs, self.admin_user_gpu],
-        )
-        self.admin_change_pwd_btn.click(
-            handle_admin_change_password,
-            inputs=[self.admin_password_user, self.admin_new_password, self.admin_confirm_password],
-            outputs=[self.admin_user_table, self.admin_user_selector, self.admin_password_user, self.admin_password_msg],
-        )
+        self.admin_refresh_btn.click(lambda: db_manager.get_all_users_for_admin(), outputs=[self.admin_user_table])
+        self.admin_delete_btn.click(handle_admin_delete, inputs=[self.admin_target_id], outputs=[self.admin_user_table, self.admin_msg, self.admin_user_selector, self.admin_password_user])
+        self.admin_refresh_monitor_btn.click(handle_admin_monitor, inputs=[self.admin_user_selector], outputs=[self.admin_user_summary, self.admin_user_logs, self.admin_user_gpu])
+        self.admin_change_pwd_btn.click(handle_admin_change_password, inputs=[self.admin_password_user, self.admin_new_password, self.admin_confirm_password], outputs=[self.admin_user_table, self.admin_user_selector, self.admin_password_user, self.admin_password_msg])
 
         self.video_input.stream(
             fn=self.process_video_stream,
@@ -481,12 +506,7 @@ class SystemInterface:
             show_progress="hidden",
             queue=False,
         )
-
-        self.audio_input.start_recording(
-            fn=lambda: "正在录音：系统正在同步提取您的面部表情...",
-            outputs=[self.recording_status],
-        ).then(fn=lambda: setattr(self, "is_recording", True))
-
+        self.audio_input.start_recording(fn=lambda: "正在录音：系统正在同步提取您的面部表情...", outputs=[self.recording_status]).then(fn=lambda: setattr(self, "is_recording", True))
         self.audio_input.stop_recording(
             fn=self.process_dialogue,
             inputs=[self.audio_input, self.recognized_text],
@@ -500,15 +520,7 @@ class SystemInterface:
         self.last_proc_time = time.time()
 
         if self.is_asr_processing:
-            return (
-                self.current_emotion,
-                f"{self.visual_confidence:.2%}",
-                self._get_emotion_bars(self.last_emotion_probs),
-                self._frame_count_internal,
-                time.strftime("%H:%M:%S"),
-                "系统算力当前优先分配给语音与大模型处理...",
-                "--",
-            )
+            return self.current_emotion, f"{self.visual_confidence:.2%}", self._get_emotion_bars(self.last_emotion_probs), self._frame_count_internal, time.strftime("%H:%M:%S"), "系统算力当前优先分配给语音与大模型处理...", "--"
 
         emotion, confidence, probs = self.current_emotion, self.visual_confidence, self.last_emotion_probs
         try:
@@ -527,7 +539,6 @@ class SystemInterface:
         if len(self.system_logs) > 50:
             self.system_logs.pop(0)
         log_text = "\n".join(self.system_logs[-10:])
-
         self._frame_count_internal += 1
         return emotion, f"{confidence:.2%}", emotion_bars_html, self._frame_count_internal, time.strftime("%H:%M:%S"), log_text, self._get_gpu_mem()
 
@@ -551,41 +562,19 @@ class SystemInterface:
             self.recording_emotion_buffer = []
 
             if LLM_AVAILABLE:
-                llm_emotion, response_text = await asyncio.to_thread(
-                    generate_empathetic_response,
-                    user_text,
-                    visual_decision,
-                    audio_emo,
-                    visual_decision,
-                    self.chat_history,
-                )
+                llm_emotion, response_text = await asyncio.to_thread(generate_empathetic_response, user_text, visual_decision, audio_emo, visual_decision, self.chat_history)
             else:
                 llm_emotion, response_text = "Neutral", f"你说：{user_text}"
 
-            audio_output_path = await generate_audio_reply(response_text) if TTS_AVAILABLE else None
+            audio_output_path = await generate_audio_reply(response_text, voice=self._current_voice()) if TTS_AVAILABLE else None
 
             if self.current_session_id:
-                db_manager.add_dialogue_turn(
-                    self.current_session_id,
-                    user_text,
-                    response_text,
-                    visual_decision,
-                    self.visual_confidence,
-                    audio_emo,
-                    audio_conf,
-                    llm_emotion,
-                )
+                db_manager.add_dialogue_turn(self.current_session_id, user_text, response_text, visual_decision, self.visual_confidence, audio_emo, audio_conf, llm_emotion)
                 self.chat_history = db_manager.get_session_messages(self.current_session_id)
             else:
                 self.chat_history = self.chat_history + [(user_text, response_text)]
 
-            fusion_text = (
-                "多模态情感分析结果：\n"
-                f"视觉判定基调: {visual_decision}\n"
-                f"音频情感检测: {audio_emo}\n"
-                f"大语言模型最终评估: {llm_emotion}"
-            )
-
+            fusion_text = f"多模态情感分析结果：\n视觉判定基调: {visual_decision}\n音频情感检测: {audio_emo}\n大语言模型最终评估: {llm_emotion}"
             self.system_logs.extend([
                 f"[{time.strftime('%H:%M:%S')}] ASR文字转写: {user_text}",
                 f"[{time.strftime('%H:%M:%S')}] 录音视觉众数: {visual_decision}",
@@ -596,12 +585,7 @@ class SystemInterface:
             if len(self.system_logs) > 50:
                 self.system_logs = self.system_logs[-50:]
 
-            self._log_user_event(
-                "dialogue",
-                f"完成一次多模态对话。文本='{user_text[:30]}'，视觉={visual_decision}，音频={audio_emo}，最终={llm_emotion}",
-                self.current_session_id,
-            )
-
+            self._log_user_event("dialogue", f"完成一次多模态对话。文本='{user_text[:30]}'，视觉={visual_decision}，音频={audio_emo}，最终={llm_emotion}，音色={self._current_voice()}", self.current_session_id)
             return self.chat_history, user_text, audio_output_path, fusion_text, "\n".join(self.system_logs[-10:]), "多模态情感计算完成", self._get_gpu_mem()
         finally:
             self.is_asr_processing = False
