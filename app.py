@@ -13,16 +13,15 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from config import ADMIN_INVITE_CODE
 from utils import db_manager
 
+DEFAULT_USER_ACTION = "请选择功能"
 USER_ACTIONS = ["个性化设置", "修改密码", "退出账号"]
+USER_ACTION_MENU_OPTIONS = [DEFAULT_USER_ACTION] + USER_ACTIONS
 ACCOUNT_PAGE_ACTIONS = ["返回主页"] + USER_ACTIONS
 TTS_VOICE_PRESETS = {
     "标准普通话": "zh-CN-XiaoxiaoNeural",
-    "广西口音近似": "zh-CN-XiaoxiaoNeural",
-    "中原汉语河南话近似": "zh-CN-XiaoxiaoDialectsNeural",
     "东北普通话": "zh-CN-liaoning-XiaobeiNeural",
-    "陕西中原官话": "zh-CN-shaanxi-XiaoniNeural",
-    "西南普通话": "zh-CN-sichuan-YunxiNeural",
     "粤语": "zh-HK-HiuMaanNeural",
+    "陕西话": "zh-CN-shaanxi-XiaoniNeural",
 }
 TTS_VOICE_OPTIONS = list(TTS_VOICE_PRESETS.keys())
 VOICE_PREVIEW_TEXT = "你好，欢迎使用多模态情感感知共情对话系统，这是当前音色的试听示例。"
@@ -208,8 +207,8 @@ class SystemInterface:
                 with gr.Row():
                     self.user_header_msg = gr.Markdown("### 欢迎使用系统")
                     self.user_action_menu = gr.Dropdown(
-                        USER_ACTIONS,
-                        value="个性化设置",
+                        USER_ACTION_MENU_OPTIONS,
+                        value=DEFAULT_USER_ACTION,
                         label="账户功能",
                         interactive=True,
                         scale=1,
@@ -230,7 +229,7 @@ class SystemInterface:
                             self.user_nickname = gr.Textbox(label="昵称")
                             self.user_bio = gr.Textbox(label="个人资料", lines=4, placeholder="介绍一下自己或写下你的偏好")
                             self.user_voice = gr.Dropdown(TTS_VOICE_OPTIONS, label="偏好音色", value="标准普通话", interactive=True)
-                            gr.Markdown("音色说明：广西、河南目前先使用公开可用音色做近似映射。")
+                            gr.Markdown("音色说明：当前支持标准普通话、东北普通话、粤语、陕西话四种音色。")
                             self.user_voice_preview_btn = gr.Button("试听当前音色", variant="secondary")
                             self.user_voice_preview_audio = gr.Audio(label="音色试听", interactive=False, autoplay=True)
                             self.user_profile_save_btn = gr.Button("保存个性化设置", variant="secondary")
@@ -378,14 +377,15 @@ class SystemInterface:
             return gr.update(value=db_manager.get_all_users_for_admin()), gr.update(choices=user_choices), gr.update(choices=user_choices), message
 
         def route_user_page(action):
-            target = action or "返回主页"
+            target = action or DEFAULT_USER_ACTION
+            show_home = target in {"返回主页", DEFAULT_USER_ACTION}
             return (
                 gr.update(visible=False),
-                gr.update(visible=target == "返回主页"),
+                gr.update(visible=show_home),
                 gr.update(visible=target == "个性化设置"),
                 gr.update(visible=target == "修改密码"),
                 gr.update(visible=target == "退出账号"),
-                gr.update(value="个性化设置"),
+                gr.update(value=DEFAULT_USER_ACTION),
                 gr.update(value=target),
                 gr.update(value=target),
                 gr.update(value=target),
@@ -413,7 +413,7 @@ class SystemInterface:
                     msg, gr.update(), gr.update(), gr.update(), admin_table,
                     admin_selector, admin_password_user, admin_message,
                     gr.update(), gr.update(), gr.update(), gr.update(),
-                    gr.update(value="个性化设置"),
+                    gr.update(value=DEFAULT_USER_ACTION),
                     gr.update(value="个性化设置"),
                     gr.update(value="修改密码"),
                     gr.update(value="退出账号"),
@@ -426,7 +426,7 @@ class SystemInterface:
                     "账号、密码或登录类型不正确，请检查后重试", gr.update(), gr.update(), gr.update(), gr.update(),
                     gr.update(), gr.update(), gr.update(),
                     gr.update(), gr.update(), gr.update(), gr.update(),
-                    gr.update(value="个性化设置"),
+                    gr.update(value=DEFAULT_USER_ACTION),
                     gr.update(value="个性化设置"),
                     gr.update(value="修改密码"),
                     gr.update(value="退出账号"),
@@ -449,7 +449,7 @@ class SystemInterface:
                     gr.update(choices=session_choices, value=session_choices[0] if session_choices else None), gr.update(),
                     gr.update(), gr.update(), gr.update(),
                     profile_username, nickname, bio, voice,
-                    gr.update(value="个性化设置"),
+                    gr.update(value=DEFAULT_USER_ACTION),
                     gr.update(value="个性化设置"),
                     gr.update(value="修改密码"),
                     gr.update(value="退出账号"),
@@ -461,7 +461,7 @@ class SystemInterface:
                 "", gr.update(), "### 超级管理员后台授权成功",
                 gr.update(), admin_table, admin_selector, admin_password_user, admin_message,
                 gr.update(), gr.update(), gr.update(), gr.update(),
-                gr.update(value="个性化设置"),
+                gr.update(value=DEFAULT_USER_ACTION),
                 gr.update(value="个性化设置"),
                 gr.update(value="修改密码"),
                 gr.update(value="退出账号"),
