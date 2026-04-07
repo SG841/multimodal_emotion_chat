@@ -479,7 +479,10 @@ class SystemInterface:
             return gr.update(choices=session_choices, value=session_choices[0]), self.chat_history, "", None, "对话已清空"
 
         def show_example():
-            example_history = [("我最近工作压力很大", "听起来你最近承受了不少压力。如果你愿意，可以和我说说最困扰你的是什么。")]
+            example_history = [
+                {"role": "user", "content": "我最近工作压力很大"},
+                {"role": "assistant", "content": "听起来你最近承受了不少压力。如果你愿意，可以和我说说最困扰你的是什么。"},
+            ]
             self.chat_history = example_history
             return example_history
 
@@ -739,7 +742,10 @@ class SystemInterface:
                 db_manager.add_dialogue_turn(self.current_session_id, user_text, response_text, visual_decision, self.visual_confidence, audio_emo, audio_conf, llm_emotion)
                 self.chat_history = db_manager.get_session_messages(self.current_session_id)
             else:
-                self.chat_history = self.chat_history + [(user_text, response_text)]
+                self.chat_history = self.chat_history + [
+                    {"role": "user", "content": user_text},
+                    {"role": "assistant", "content": response_text},
+                ]
 
             fusion_text = f"多模态情感分析结果：\n视觉判定基调: {visual_decision}\n音频情感检测: {audio_emo}\n大语言模型最终评估: {llm_emotion}"
             self.system_logs.extend([
