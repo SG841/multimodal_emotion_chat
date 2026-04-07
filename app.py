@@ -1,658 +1,81 @@
 """
-Gradio 交互界面模块
-多模态情感感知共情对话系统的前端界面
+Gradio 交互界面模块 - 角色绝对隔离架构版
+支持普通用户态（多模态感知交互）与管理员态（全局监控），两侧页面物理隔离
 """
-
 import gradio as gr
 import numpy as np
-from typing import Optional, Tuple
 import time
 import sys
 import os
 import asyncio
 import collections
-from functools import partial
 
-# 添加项目路径
+# 引入数据库模块
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from utils import db_manager
 
-# 导入视觉模块
+# 动态加载算法模块
 try:
     from modules.vision import predict_emotion
     VISION_AVAILABLE = True
 except ImportError as e:
-    print(f"视觉模块导入失败: {e}")
+    print(f"视觉模块未加载: {e}")
     VISION_AVAILABLE = False
 
-# 导入音频模块
 try:
     from modules.audio import transcribe_audio, predict_audio_emotion
     AUDIO_AVAILABLE = True
 except ImportError as e:
-    print(f"音频模块导入失败: {e}")
+    print(f"音频模块未加载: {e}")
     AUDIO_AVAILABLE = False
 
-# 导入LLM模块
 try:
     from modules.llm import generate_empathetic_response, _get_llm_model
     LLM_AVAILABLE = True
 except ImportError as e:
-    print(f"LLM模块导入失败: {e}")
+    print(f"LLM模块未加载: {e}")
     LLM_AVAILABLE = False
 
-# 导入TTS模块
 try:
     from modules.tts import generate_audio_reply
     TTS_AVAILABLE = True
 except ImportError as e:
-    print(f"TTS模块导入失败: {e}")
+    print(f"TTS模块未加载: {e}")
     TTS_AVAILABLE = False
 
-# 导入监控模块
 try:
     from utils.monitor import monitor
     MONITOR_AVAILABLE = True
 except ImportError as e:
-    print(f"监控模块导入失败: {e}")
+    print(f"监控模块未加载: {e}")
     MONITOR_AVAILABLE = False
 
 
-class EmotionChatInterface:
-    """共情对话系统交互界面"""
-
+class SystemInterface:
     def __init__(self):
-        """初始化界面组件"""
-        # 全局状态（实际使用时会从 modules.shared_state 导入）
+        # 系统运行时用户状态
+        self.current_user_id = None
+        self.current_username = None
+        self.current_session_id = None
+        
+        # 多模态感知状态
         self.current_emotion = "Neutral"
         self.visual_confidence = 0.0
         self.chat_history = []
         self.system_logs = []
-        self._frame_count_internal = 0  # 内部帧计数器（整数）
-        self.last_emotion_probs = {}   # 保存最后一次的情绪概率
+        self._frame_count_internal = 0
+        self.last_emotion_probs = {}
+        
+        # 录音与并发控制状态
+        self.is_recording = False
+        self.is_asr_processing = False  
+        self.recording_emotion_buffer = [] 
+        self.last_proc_time = 0
 
-        # === 新增状态管理 ===
-        self.is_recording = False          # 正在录音标记
-        self.is_asr_processing = False     # 正在 ASR 推理标记（算力避让锁）
-        self.recording_emotion_buffer = [] # 录音期间的情感缓冲区
-        self.last_proc_time = 0          # 【频率控制】记录上次处理时间戳
-
-        # === 用户登录状态 ===
-        self.current_user = None  # 当前登录的用户名
-
-        # 创建界面
         self.create_interface()
 
-    def create_interface(self):
-        """创建 Gradio 界面"""
-        with gr.Blocks(title="多模态情感感知共情对话系统") as self.interface:
-
-            # ===== 登录/注册区域 (初始显示) =====
-            with gr.Column(visible=True) as self.login_area:
-                gr.Markdown("# 🔑 系统登录")
-                gr.Markdown("请登录或注册以使用多模态情感感知共情对话系统")
-
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        pass  # 左侧留白
-
-                    with gr.Column(scale=2):
-                        self.user_input = gr.Textbox(
-                            label="用户名",
-                            placeholder="请输入用户名",
-                            max_lines=1
-                        )
-                        self.pass_input = gr.Textbox(
-                            label="密码",
-                            placeholder="请输入密码",
-                            type="password",
-                            max_lines=1
-                        )
-
-                        with gr.Row():
-                            self.login_btn = gr.Button("登录", variant="primary", scale=2)
-                            self.reg_btn = gr.Button("注册", variant="secondary", scale=1)
-
-                        self.auth_msg = gr.Markdown("")
-
-                    with gr.Column(scale=1):
-                        pass  # 右侧留白
-
-            # ===== 主交互区域 (初始隐藏) =====
-            with gr.Column(visible=False) as self.main_area:
-                # 欢迎信息
-                self.welcome_display = gr.Markdown("### 欢迎使用系统")
-
-                # 标题栏
-                gr.Markdown(
-                    """
-                    # 🤖 多模态情感感知共情对话系统
-
-                    基于视觉与听觉的情感识别 + 大语言模型共情对话
-                    """
-                )
-
-                # 主布局：左侧感知区，右侧交互区
-                with gr.Row():
-                    # ===== 左侧：感知区域 =====
-                    with gr.Column(scale=3):
-                        gr.Markdown("### 👁️ 视觉感知区")
-
-                        # 摄像头视频流 - 强制低分辨率采集 (320x240 减少带宽)
-                        # 注意: height/width 参数会影响 getUserMedia 约束
-                        self.video_input = gr.Image(
-                            sources=["webcam"],
-                            # streaming=True,
-                            label="实时视频流",
-                            elem_id="video-stream",
-                            # height=240,   # 强制采集高度 240
-                            # width=320     # 强制采集宽度 320
-                        )
-
-                        # 情绪状态显示卡片
-                        with gr.Row():
-                            with gr.Column():
-                                self.emotion_display = gr.Textbox(
-                                    label="当前识别情绪",
-                                    value="等待中...",
-                                    interactive=False,
-                                    elem_id="emotion-display"
-                                )
-                            with gr.Column():
-                                self.confidence_display = gr.Textbox(
-                                    label="视觉置信度",
-                                    value="--",
-                                    interactive=False
-                                )
-
-                        # 情绪进度条可视化
-                        self.emotion_bars = gr.HTML(
-                            value=self._get_empty_emotion_bars(),
-                            label="情绪概率分布"
-                        )
-
-                        # 视觉状态统计
-                        with gr.Row():
-                            self.frame_count = gr.Number(
-                                label="已处理帧数",
-                                value=0,
-                                interactive=False
-                            )
-                            self.last_update = gr.Textbox(
-                                label="最后更新时间",
-                                value="--",
-                                interactive=False
-                            )
-
-                    # ===== 右侧：交互区域 =====
-                    with gr.Column(scale=2):
-                        gr.Markdown("### 💬 对话交互区")
-
-                        # 对话历史记录
-                        self.chat_display = gr.Chatbot(
-                            label="对话历史",
-                            height=300,
-                            avatar_images=(
-                                None,  # 用户头像
-                                "🤖"  # 系统头像（显示有问题）
-                            )
-                        )
-
-                        # 语音输入区域
-                        with gr.Row():
-                            self.audio_input = gr.Audio(
-                                sources=["microphone"],
-                                type="filepath",  # 返回文件路径
-                                label="语音输入"
-                            )
-                            self.recording_status = gr.Textbox(
-                                value="点击录音开始说话...",
-                                interactive=False,
-                                scale=2
-                            )
-
-                        # 文本显示（语音识别结果）
-                        self.recognized_text = gr.Textbox(
-                            label="语音识别结果",
-                            placeholder="您的语音将在这里显示...",
-                            lines=2,
-                            interactive=False
-                        )
-
-                        # 语音播放区域
-                        self.audio_output = gr.Audio(
-                            label="系统回复语音",
-                            autoplay=True
-                        )
-
-                        # 操作按钮
-                        with gr.Row():
-                            self.clear_btn = gr.Button("清空对话", variant="secondary")
-                            self.example_btn = gr.Button("示例对话", variant="secondary")
-
-                # ===== 底部：系统监控区域 =====
-                gr.Markdown("### 📊 系统监控日志")
-
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        # 融合决策显示
-                        self.fusion_display = gr.Textbox(
-                            label="多模态参考信息",
-                            value="等待数据...",
-                            interactive=False,
-                            lines=4
-                        )
-
-                    with gr.Column(scale=2):
-                        # 系统日志
-                        self.log_display = gr.Textbox(
-                            label="系统运行日志",
-                            value="系统初始化完成...",
-                            interactive=False,
-                            lines=8,
-                            max_lines=10,
-                            autoscroll=True
-                        )
-
-                        # 性能指标
-                        with gr.Row():
-                            self.gpu_memory = gr.Textbox(
-                                label="GPU 显存占用",
-                                value="-- MB",
-                                interactive=False
-                            )
-
-            # 绑定事件
-            self._bind_events()
-
-    def _bind_events(self):
-        """绑定界面事件 - 开启并发与异步通道"""
-
-        # ===== 登录/注册事件 =====
-        def perform_login(username, password):
-            """处理登录"""
-            from utils.auth_json import login_user
-
-            if login_user(username, password):
-                self.current_user = username
-                return (
-                    gr.update(visible=False),  # 隐藏登录区
-                    gr.update(visible=True),   # 显示主区
-                    f"### 欢迎回来，{username} 👋",  # 更新欢迎信息
-                    ""  # 清空错误消息
-                )
-            else:
-                return (
-                    gr.update(visible=True),   # 保持登录区显示
-                    gr.update(visible=False),  # 保持主区隐藏
-                    "",  # 不更新欢迎信息
-                    "❌ 用户名或密码错误，请重试"  # 显示错误
-                )
-
-        def perform_register(username, password):
-            """处理注册"""
-            from utils.auth_json import register_user
-            result = register_user(username, password)
-            return result
-
-        self.login_btn.click(
-            fn=perform_login,
-            inputs=[self.user_input, self.pass_input],
-            outputs=[self.login_area, self.main_area, self.welcome_display, self.auth_msg]
-        )
-
-        self.reg_btn.click(
-            fn=perform_register,
-            inputs=[self.user_input, self.pass_input],
-            outputs=[self.auth_msg]
-        )
-
-        # ===== 主界面事件 =====
-
-        # 视频流：高频预测 + 录音期间数据累积
-        self.video_input.stream(
-            fn=self.process_video_stream,
-            inputs=[self.video_input],
-            outputs=[
-                self.emotion_display,
-                self.confidence_display,
-                self.emotion_bars,
-                self.frame_count,
-                self.last_update,
-                self.log_display,
-                self.gpu_memory
-            ],
-            show_progress="hidden",
-            concurrency_limit=1,  # 单线程循环，防止帧积压
-            queue=False
-        )
-
-        # 新增：录音开始事件
-        self.audio_input.start_recording(
-            fn=self.handle_recording_start,
-            outputs=[self.recording_status]
-        )
-
-        # 录音结束：触发 ASR + LLM 情感分析
-        self.audio_input.stop_recording(
-            fn=self.process_dialogue,
-            inputs=[self.audio_input, self.recognized_text],
-            outputs=[
-                self.chat_display,
-                self.recognized_text,
-                self.audio_output,
-                self.fusion_display,
-                self.log_display,
-                self.recording_status,
-                self.gpu_memory
-            ],
-            concurrency_limit=1,  # ASR 独占一个高优先级通道
-            queue=True
-        )
-
-        # 清空对话按钮
-        self.clear_btn.click(
-            fn=self.clear_chat,
-            outputs=[
-                self.chat_display,
-                self.recognized_text,
-                self.audio_output,
-                self.log_display
-            ]
-        )
-
-        # 示例对话按钮
-        self.example_btn.click(
-            fn=self.show_example,
-            outputs=[self.chat_display] # 明确指向聊天显示组件
-        )
-
-    def handle_recording_start(self):
-        """录音开始：初始化缓冲区"""
-        self.is_recording = True
-        self.recording_emotion_buffer = []  # 清空之前的记录
-        return "正在录音：系统正在同步分析您的全段表情..."
-
-    async def process_video_stream(
-        self,
-        video_frame: Optional[np.ndarray]
-    ) -> Tuple[
-        str, str, str, int, str, str, str
-    ]:
-        """
-        处理视频流 - 情绪识别
-        优化：不返回video_frame，避免图像往返开销
-
-        Args:
-            video_frame: 视频帧 (numpy array, RGB)
-
-        Returns:
-            情绪标签、置信度、情绪条HTML、帧计数、更新时间、日志
-        """
-        if video_frame is None:
-            gpu_mem = monitor.get_resource_status().get("gpu_mem", "--") if MONITOR_AVAILABLE else "--"
-            return "等待中...", "--", self._get_empty_emotion_bars(), 0, "--", "等待视频流...", gpu_mem
-
-        # 【频率控制】强制每 150ms 最多处理一帧（约 6-7 FPS），减少 CPU 负担 （跟queue=False双重保险）
-        curr_time = time.time()
-        if curr_time - self.last_proc_time < 0.15:
-            return (gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip())
-        self.last_proc_time = curr_time
-
-        # 【优先级调度】ASR 运行期间，视觉模块停止向 GPU 发送新任务，防止抢占 ASR 的 WebSocket 管道
-        if self.is_asr_processing:
-            return (
-                self.current_emotion,
-                f"{self.visual_confidence:.2%}",
-                self._get_emotion_bars(self.last_emotion_probs),
-                self._frame_count_internal,
-                time.strftime("%H:%M:%S"),
-                "GPU 算力优先分配给 ASR 推理...",
-                "--"
-            )
-
-        # 调用视觉模块进行情绪识别
-        try:
-            if VISION_AVAILABLE:
-                # 【优化】直接传 numpy 数组，torch.from_numpy 在 vision.py 中直接接管显存，避免 CPU 拷贝
-                emotion, confidence, probs = await asyncio.to_thread(predict_emotion, video_frame, skip_frames=1)
-
-                # 更新实时状态
-                self.current_emotion, self.visual_confidence, self.last_emotion_probs = emotion, confidence, probs
-                emotion_probs = probs
-
-                # 【核心功能】如果在录音，则把每一帧结果存入缓冲区
-                if self.is_recording:
-                    self.recording_emotion_buffer.append(emotion)
-        except Exception as e:
-            print(f"Vision Error: {e}")
-            emotion = self.current_emotion
-            confidence = self.visual_confidence
-            emotion_probs = self.last_emotion_probs
-
-        # 生成情绪条HTML
-        emotion_bars_html = self._get_emotion_bars(emotion_probs)
-
-        # 更新日志
-        log_entry = f"[{time.strftime('%H:%M:%S')}] 视觉识别: {emotion} (置信度: {confidence})"
-        self.system_logs.append(log_entry)
-        if len(self.system_logs) > 50:
-            self.system_logs.pop(0)
-
-        log_display = "\n".join(self.system_logs[-10:])
-
-        # 增加帧计数
-        self._frame_count_internal += 1
-
-        # 获取 GPU 显存
-        gpu_mem = monitor.get_resource_status().get("gpu_mem", "--") if MONITOR_AVAILABLE else "--"
-
-        return (
-            emotion,
-            f"{confidence:.2%}",
-            emotion_bars_html,
-            self._frame_count_internal,
-            time.strftime("%H:%M:%S"),
-            log_display,
-            gpu_mem
-        )
-
-    async def process_dialogue(
-        self,
-        audio_path: Optional[str],
-        current_text: str
-    ) -> Tuple:
-        """
-        对话处理：执行 ASR 并融合录音全段的视觉特征
-
-        Args:
-            audio_path: 录音文件路径
-            current_text: 当前显示的文本
-
-        Returns:
-            对话历史、识别文本、音频输出、融合决策、日志、状态、显存
-        """
-        if not audio_path:
-            gpu_mem = monitor.get_resource_status().get("gpu_mem", "--") if MONITOR_AVAILABLE else "--"
-            return (
-                self.chat_history,
-                current_text,
-                None,
-                "等待语音输入...",
-                "\n".join(self.system_logs[-10:]),
-                "请先录音",
-                gpu_mem
-            )
-
-        try:
-            self.is_asr_processing = True  # 开启算力保护锁
-            self.is_recording = False      # 标记录音结束
-
-            # 1. 执行真实的 ASR 推理 (派发到独立线程)
-            if AUDIO_AVAILABLE:
-                user_text = await asyncio.to_thread(transcribe_audio, audio_path)
-            else:
-                user_text = "[音频模块未加载]"
-
-            # 2. 【全程视觉融合】计算录音全过程出现频率最高的情绪（众数过滤噪声）
-            if self.recording_emotion_buffer:
-                # 统计出现次数最多的表情作为最终视觉决策
-                visual_decision = collections.Counter(self.recording_emotion_buffer).most_common(1)[0][0]
-                fusion_info = f"融合成功：分析了录音期间 {len(self.recording_emotion_buffer)} 帧表情，主要情绪：{visual_decision}"
-            else:
-                visual_decision = self.current_emotion
-                fusion_info = "未捕获到录音期间的视觉数据，采用末帧。"
-
-            # 3. 【音频情感识别】使用emotion2vec进行语音情感识别
-            if AUDIO_AVAILABLE:
-                audio_emotion, audio_confidence, audio_probs = await asyncio.to_thread(predict_audio_emotion, audio_path)
-            else:
-                audio_emotion = "Neutral"
-                audio_confidence = 0.0
-                audio_probs = {}
-
-            # 调用LLM生成回复（直接用大模型预测最终情绪）
-            # 多模态信息仅作为 LLM 的参考背景
-            if LLM_AVAILABLE:
-                print(f"[{time.strftime('%H:%M:%S')}] 开始调用 LLM 生成回复...")
-                # 接收返回的两个值
-                llm_emotion, response_text = await asyncio.to_thread(
-                    generate_empathetic_response,
-                    user_text,
-                    visual_decision,
-                    audio_emotion,
-                    visual_decision,  # 改为传入视觉情绪作为参考
-                    self.chat_history
-                )
-            else:
-                llm_emotion = "Neutral"
-                response_text = f"我感受到了你的情绪变化。你说：{user_text}"
-
-            # 【新增】调用 TTS 生成音频
-            audio_output_path = None
-            if TTS_AVAILABLE and response_text:
-                # 因为 process_dialogue 本身就是 async 函数，直接 await 即可
-                audio_output_path = await generate_audio_reply(response_text)
-
-            # 生成融合显示文本（显示多模态参考信息 + 最终情感判定）
-            fusion_text = f"多模态情感分析结果：\n"
-            fusion_text += f"📷 视觉检测: {visual_decision}\n"
-            fusion_text += f"🎤 音频情感: {audio_emotion}\n"
-            fusion_text += f"🧠 大模型最终判定: {llm_emotion}"
-
-            # 更新对话历史 (Gradio 6.0+ 格式: 使用 role 和 content)
-            self.chat_history.append({"role": "user", "content": user_text})
-            self.chat_history.append({"role": "assistant", "content": response_text})
-
-            # 获取 GPU 显存
-            gpu_mem = monitor.get_resource_status().get("gpu_mem", "--") if MONITOR_AVAILABLE else "--"
-
-            # 更新日志
-            log_entries = [
-                f"[{time.strftime('%H:%M:%S')}] 录音完成: {audio_path}",
-                f"[{time.strftime('%H:%M:%S')}] ASR识别: {user_text}",
-                f"[{time.strftime('%H:%M:%S')}] 录音期间视觉众数: {visual_decision}",
-                f"[{time.strftime('%H:%M:%S')}] 音频情感参考: {audio_emotion} ({audio_confidence:.0%})",
-                fusion_info,
-                f"[{time.strftime('%H:%M:%S')}] LLM最终情绪判定: {llm_emotion}",
-                f"[{time.strftime('%H:%M:%S')}] TTS语音合成: {'成功' if audio_output_path else '失败/跳过'}"
-            ]
-            self.system_logs.extend(log_entries)
-            if len(self.system_logs) > 50:
-                self.system_logs = self.system_logs[-50:]
-
-            return (
-                self.chat_history,
-                user_text,
-                audio_output_path,  # <--- 这里原先是 None，现在替换为生成的音频路径
-                fusion_text,
-                "\n".join(self.system_logs[-10:]),
-                "处理完成",
-                gpu_mem
-            )
-        finally:
-            self.is_asr_processing = False  # 释放算力锁定，视觉恢复
-
-    def clear_chat(self):
-        """清空对话历史"""
-        self.chat_history = []
-        self.system_logs = ["对话已清空"]
-        return (
-            self.chat_history,
-            "",
-            None,
-            "对话已清空"
-        )
-
-    def show_example(self):
-        """显示示例对话"""
-        example_history = [
-            {"role": "user", "content": "我最近工作压力很大"},
-            {"role": "assistant", "content": "听起来你最近承受了很大的工作压力，能具体说说是什么让你感到压力吗？"},
-            {"role": "user", "content": "老板总是给我加任务"},
-            {"role": "assistant", "content": "老板不断给你增加任务确实会让人感到疲惫和焦虑。你有没有尝试过和老板沟通这个问题？"},
-        ]
-        self.chat_history = example_history
-        return example_history
-
-    def _get_empty_emotion_bars(self) -> str:
-        """获取空的情绪条HTML"""
-        # 使用当前已知情绪，如果没有则使用默认列表
-        emotions = list(self.last_emotion_probs.keys()) if hasattr(self, 'last_emotion_probs') and self.last_emotion_probs else ["Happy", "Sad", "Angry", "Neutral", "Surprise", "Fear"]
-        colors = ["#4CAF50", "#2196F3", "#F44336", "#9E9E9E", "#FF9800", "#9C27B0"]
-        html = "<div style='margin: 10px 0;'>"
-        for i, emotion in enumerate(emotions):
-            color = colors[i % len(colors)]
-            html += f"""
-            <div style='display: flex; align-items: center; margin: 5px 0;'>
-                <span style='width: 80px; font-size: 12px;'>{emotion}</span>
-                <div style='flex: 1; height: 20px; background: #e0e0e0; border-radius: 10px; margin-left: 10px;'>
-                    <div style='width: 0%; height: 100%; background: {color}; border-radius: 10px;'></div>
-                </div>
-                <span style='width: 40px; text-align: right; font-size: 12px;'>0%</span>
-            </div>
-            """
-        html += "</div>"
-        return html
-
-    def _get_emotion_bars(self, emotion_probs: dict) -> str:
-        """
-        获取情绪概率分布的HTML条形图
-
-        Args:
-            emotion_probs: 情绪概率字典 {emotion: probability}
-
-        Returns:
-            HTML格式的条形图
-        """
-        # 如果为空，返回空条形图
-        if not emotion_probs:
-            return self._get_empty_emotion_bars()
-
-        # 保存最后一次的 emotion_probs 用于后续显示
-        self.last_emotion_probs = emotion_probs
-
-        # 按概率排序，取前6个情绪
-        sorted_emotions = sorted(emotion_probs.items(), key=lambda x: x[1], reverse=True)[:6]
-
-        colors = ["#4CAF50", "#2196F3", "#F44336", "#9E9E9E", "#FF9800", "#9C27B0"]
-        html = "<div style='margin: 10px 0;'>"
-        for i, (emotion, prob) in enumerate(sorted_emotions):
-            color = colors[i % len(colors)]
-            prob_percent = prob * 100
-            html += f"""
-            <div style='display: flex; align-items: center; margin: 5px 0;'>
-                <span style='width: 80px; font-size: 12px;'>{emotion}</span>
-                <div style='flex: 1; height: 20px; background: #e0e0e0; border-radius: 10px; margin-left: 10px;'>
-                    <div style='width: {prob_percent}%; height: 100%; background: {color}; border-radius: 10px; transition: width 0.3s;'></div>
-                </div>
-                <span style='width: 40px; text-align: right; font-size: 12px;'>{prob_percent:.0f}%</span>
-            </div>
-            """
-        html += "</div>"
-        return html
-
     def _get_custom_css(self) -> str:
-        """获取自定义CSS样式"""
+        """完全保留原始的 CSS 样式"""
         return """
         #emotion-display {
             font-size: 24px !important;
@@ -660,7 +83,6 @@ class EmotionChatInterface:
             text-align: center !important;
             padding: 10px !important;
         }
-        /* 固定视频流容器大小 */
         #video-stream {
             border-radius: 10px !important;
         }
@@ -684,63 +106,361 @@ class EmotionChatInterface:
         }
         """
 
-    def launch(self, **kwargs):
-        """启动界面"""
-        # 设置 Gradio 6.0 的主题和CSS
-        theme = gr.themes.Soft(
-            primary_hue="indigo",
-            secondary_hue="blue",
+    def _get_empty_emotion_bars(self) -> str:
+        """获取空的情绪条HTML"""
+        emotions = list(self.last_emotion_probs.keys()) if hasattr(self, 'last_emotion_probs') and self.last_emotion_probs else ["Happy", "Sad", "Angry", "Neutral", "Surprise", "Fear"]
+        colors = ["#4CAF50", "#2196F3", "#F44336", "#9E9E9E", "#FF9800", "#9C27B0"]
+        html = "<div style='margin: 10px 0;'>"
+        for i, emotion in enumerate(emotions):
+            color = colors[i % len(colors)]
+            html += f"""
+            <div style='display: flex; align-items: center; margin: 5px 0;'>
+                <span style='width: 80px; font-size: 12px;'>{emotion}</span>
+                <div style='flex: 1; height: 20px; background: #e0e0e0; border-radius: 10px; margin-left: 10px;'>
+                    <div style='width: 0%; height: 100%; background: {color}; border-radius: 10px;'></div>
+                </div>
+                <span style='width: 40px; text-align: right; font-size: 12px;'>0%</span>
+            </div>
+            """
+        html += "</div>"
+        return html
+
+    def _get_emotion_bars(self, emotion_probs: dict) -> str:
+        """获取情绪概率分布的HTML条形图"""
+        if not emotion_probs: return self._get_empty_emotion_bars()
+        self.last_emotion_probs = emotion_probs
+        sorted_emotions = sorted(emotion_probs.items(), key=lambda x: x[1], reverse=True)[:6]
+        colors = ["#4CAF50", "#2196F3", "#F44336", "#9E9E9E", "#FF9800", "#9C27B0"]
+        html = "<div style='margin: 10px 0;'>"
+        for i, (emotion, prob) in enumerate(sorted_emotions):
+            color = colors[i % len(colors)]
+            prob_percent = prob * 100
+            html += f"""
+            <div style='display: flex; align-items: center; margin: 5px 0;'>
+                <span style='width: 80px; font-size: 12px;'>{emotion}</span>
+                <div style='flex: 1; height: 20px; background: #e0e0e0; border-radius: 10px; margin-left: 10px;'>
+                    <div style='width: {prob_percent}%; height: 100%; background: {color}; border-radius: 10px; transition: width 0.3s;'></div>
+                </div>
+                <span style='width: 40px; text-align: right; font-size: 12px;'>{prob_percent:.0f}%</span>
+            </div>
+            """
+        html += "</div>"
+        return html
+
+    def create_interface(self):
+        with gr.Blocks(title="多模态情感感知共情对话系统", theme=gr.themes.Soft(), css=self._get_custom_css()) as self.app:
+            
+            # ================== 模块 1：通用登录入口 ==================
+            with gr.Column(visible=True) as self.login_page:
+                gr.Markdown("# 🔑 系统登录")
+                gr.Markdown("请登录或注册以使用系统。不同的账号类型将跳转至对应的专属控制台。")
+                with gr.Row():
+                    with gr.Column(scale=1): pass
+                    with gr.Column(scale=2):
+                        self.login_user = gr.Textbox(label="用户名", placeholder="请输入用户名", max_lines=1)
+                        self.login_pwd = gr.Textbox(label="密码", placeholder="请输入密码", type="password", max_lines=1)
+                        with gr.Row():
+                            self.btn_login = gr.Button("安全登录", variant="primary")
+                            self.btn_register = gr.Button("注册用户", variant="secondary")
+                        self.login_msg = gr.Markdown("")
+                    with gr.Column(scale=1): pass
+
+
+            # ================== 模块 2：普通用户专属界面 ==================
+            # 【架构修改】脱离 Tabs，独立为一个绝对隔离的 Column 容器
+            with gr.Column(visible=False) as self.user_page:
+                with gr.Row():
+                    self.user_header_msg = gr.Markdown("### 欢迎使用系统")
+                    self.btn_user_logout = gr.Button("🚪 退出账号", size="sm", variant="stop")
+
+                with gr.Row():
+                    # 1. 历史会话区
+                    with gr.Column(scale=1, variant="panel"):
+                        gr.Markdown("### 📂 历史记录")
+                        self.session_dropdown = gr.Dropdown(label="选择历史会话", choices=[], interactive=True)
+                        self.btn_new_session = gr.Button("➕ 新建对话", variant="primary")
+                        gr.Markdown("---")
+                        self.btn_export = gr.Button("📥 导出聊天记录")
+                        self.export_file = gr.File(label="下载文件", interactive=False)
+
+                    # 2. 视觉感知区
+                    with gr.Column(scale=3):
+                        gr.Markdown("### 👁️ 视觉感知区")
+                        self.video_input = gr.Image(sources=["webcam"], label="实时视频流", elem_id="video-stream")
+                        with gr.Row():
+                            with gr.Column():
+                                self.emotion_display = gr.Textbox(label="当前识别情绪", value="等待中...", interactive=False, elem_id="emotion-display")
+                            with gr.Column():
+                                self.confidence_display = gr.Textbox(label="视觉置信度", value="--", interactive=False)
+                        self.emotion_bars = gr.HTML(value=self._get_empty_emotion_bars(), label="情绪概率分布")
+                        with gr.Row():
+                            self.frame_count = gr.Number(label="已处理帧数", value=0, interactive=False)
+                            self.last_update = gr.Textbox(label="最后更新时间", value="--", interactive=False)
+
+                    # 3. 对话交互区
+                    with gr.Column(scale=2):
+                        gr.Markdown("### 💬 对话交互区")
+                        self.chat_display = gr.Chatbot(label="对话历史", height=300, avatar_images=(None, "🤖"))
+                        with gr.Row():
+                            self.audio_input = gr.Audio(sources=["microphone"], type="filepath", label="语音输入")
+                            self.recording_status = gr.Textbox(value="点击录音开始说话...", interactive=False, scale=2)
+                        self.recognized_text = gr.Textbox(label="语音识别结果", placeholder="您的语音将在这里显示...", lines=2, interactive=False)
+                        self.sys_audio_output = gr.Audio(label="系统回复语音", autoplay=True)
+                        with gr.Row():
+                            self.clear_btn = gr.Button("清空对话", variant="secondary")
+                            self.example_btn = gr.Button("示例对话", variant="secondary")
+
+                # 4. 系统监控区
+                gr.Markdown("### 📊 本地任务监控日志")
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        self.fusion_display = gr.Textbox(label="多模态参考信息", value="等待数据...", interactive=False, lines=4)
+                    with gr.Column(scale=2):
+                        self.log_display = gr.Textbox(label="系统运行日志", value="系统初始化完成...", interactive=False, lines=8, max_lines=10, autoscroll=True)
+                        with gr.Row():
+                            self.gpu_memory = gr.Textbox(label="GPU 显存占用", value="-- MB", interactive=False)
+
+
+            # ================== 模块 3：超级管理员专属界面 ==================
+            # 【架构修改】完全独立，普通用户无法通过审查元素或 Tab 切换看到此页面
+            with gr.Column(visible=False) as self.admin_page:
+                with gr.Row():
+                    self.admin_header_msg = gr.Markdown("### 🛡️ 超级管理员全局控制台")
+                    self.btn_admin_logout = gr.Button("🚪 退出管理后台", size="sm", variant="stop")
+                    
+                gr.Markdown("---")
+                gr.Markdown("### 👥 系统用户大盘管理")
+                with gr.Row():
+                    with gr.Column(scale=2):
+                        self.admin_user_table = gr.Dataframe(headers=["用户ID", "用户名", "注册时间"], interactive=False)
+                        self.admin_refresh_btn = gr.Button("🔄 手动同步系统用户数据", variant="secondary")
+                    with gr.Column(scale=1):
+                        gr.Markdown("#### ⚠️ 危险操作授权区")
+                        gr.Markdown("执行删除将触发级联销毁，永久抹除该用户的所有历史会话及多模态实验数据，不可逆转。")
+                        self.admin_target_id = gr.Number(label="请输入锁定目标的用户ID", precision=0)
+                        self.admin_delete_btn = gr.Button("🗑️ 强行封禁并销毁该用户", variant="stop")
+                        self.admin_msg = gr.Markdown("")
+
+            self.bind_events()
+
+    def bind_events(self):
+        # ================== 核心鉴权与独立路由分发 ==================
+        def handle_register(u, p):
+            success, msg = db_manager.register_user(u, p)
+            return msg
+
+        def handle_login(u, p):
+            success, uid, role = db_manager.login_user(u, p)
+            if not success:
+                # 登录失败：不发生页面跳转
+                return (
+                    gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
+                    "❌ 账号或密码错误，请检查", gr.update(), gr.update(), gr.update(), gr.update()
+                )
+            
+            self.current_username = u
+            self.current_user_id = uid
+
+            # 【严格路由分发】
+            if role == "user":
+                # 跳转至普通用户页面
+                self.current_session_id = db_manager.create_session(uid)
+                self.chat_history = []
+                sessions_map = db_manager.get_user_sessions(uid)
+                session_choices = list(sessions_map.keys())
+                
+                return (
+                    gr.update(visible=False),  # 隐藏登录页
+                    gr.update(visible=True),   # 开启用户专属页
+                    gr.update(visible=False),  # 确保管理页关闭
+                    "", f"### 👤 欢迎回来，{u} 👋", gr.update(), 
+                    gr.update(choices=session_choices, value=session_choices[0] if session_choices else None),
+                    gr.update()
+                )
+            else:
+                # 跳转至管理员专属页面
+                admin_data = db_manager.get_all_users_for_admin()
+                return (
+                    gr.update(visible=False),  # 隐藏登录页
+                    gr.update(visible=False),  # 确保用户页关闭
+                    gr.update(visible=True),   # 开启管理专属页
+                    "", gr.update(), "### 🛡️ 超级管理员后台授权成功", 
+                    gr.update(), gr.update(value=admin_data)
+                )
+
+        self.btn_register.click(handle_register, [self.login_user, self.login_pwd], [self.login_msg])
+        
+        # 登录动作映射到了 8 个核心组件的路由控制
+        self.btn_login.click(
+            handle_login, [self.login_user, self.login_pwd], 
+            [self.login_page, self.user_page, self.admin_page, 
+             self.login_msg, self.user_header_msg, self.admin_header_msg, 
+             self.session_dropdown, self.admin_user_table]
         )
-        self.interface.launch(
-            theme=theme,
-            css=self._get_custom_css(),
-            **kwargs
+
+        # 两边独立的登出按钮绑定
+        self.btn_user_logout.click(lambda: (gr.update(visible=True), gr.update(visible=False)), outputs=[self.login_page, self.user_page])
+        self.btn_admin_logout.click(lambda: (gr.update(visible=True), gr.update(visible=False)), outputs=[self.login_page, self.admin_page])
+
+
+        # ================== 用户模块：对话与历史操作 ==================
+        def handle_new_session():
+            self.current_session_id = db_manager.create_session(self.current_user_id)
+            self.chat_history = []
+            self.system_logs = ["对话已清空并创建新会话"]
+            sessions_map = db_manager.get_user_sessions(self.current_user_id)
+            session_choices = list(sessions_map.keys())
+            return (gr.update(choices=session_choices, value=session_choices[0]), self.chat_history, "", None, "对话已清空")
+
+        def show_example():
+            example_history = [
+                {"role": "user", "content": "我最近工作压力很大"},
+                {"role": "assistant", "content": "听起来你最近承受了很大的工作压力，能具体说说是什么让你感到压力吗？"},
+            ]
+            self.chat_history = example_history
+            return example_history
+
+        def handle_load_session(session_name):
+            if not session_name: return []
+            sessions_map = db_manager.get_user_sessions(self.current_user_id)
+            self.current_session_id = sessions_map.get(session_name)
+            self.chat_history = db_manager.get_session_messages(self.current_session_id)
+            return self.chat_history
+
+        def handle_export():
+            if self.current_session_id:
+                path = db_manager.export_session(self.current_session_id)
+                return gr.update(value=path, visible=True)
+            return gr.update()
+
+        self.btn_new_session.click(handle_new_session, outputs=[self.session_dropdown, self.chat_display, self.recognized_text, self.sys_audio_output, self.log_display])
+        self.clear_btn.click(handle_new_session, outputs=[self.session_dropdown, self.chat_display, self.recognized_text, self.sys_audio_output, self.log_display])
+        self.example_btn.click(show_example, outputs=[self.chat_display])
+        self.session_dropdown.change(handle_load_session, inputs=[self.session_dropdown], outputs=[self.chat_display])
+        self.btn_export.click(handle_export, outputs=[self.export_file])
+
+        # ================== 管理员模块：监控与数据干预 ==================
+        self.admin_refresh_btn.click(lambda: db_manager.get_all_users_for_admin(), outputs=[self.admin_user_table])
+        self.admin_delete_btn.click(
+            lambda uid: (db_manager.get_all_users_for_admin(), db_manager.admin_delete_user(uid)), 
+            inputs=[self.admin_target_id], outputs=[self.admin_user_table, self.admin_msg]
         )
 
+        # ================== 核心调度流 (仅作用于用户页面) ==================
+        self.video_input.stream(
+            fn=self.process_video_stream,
+            inputs=[self.video_input],
+            outputs=[self.emotion_display, self.confidence_display, self.emotion_bars, 
+                     self.frame_count, self.last_update, self.log_display, self.gpu_memory],
+            show_progress="hidden", queue=False
+        )
 
-def main():
-    """主函数 - 在启动界面前完成模型加载"""
+        self.audio_input.start_recording(
+            fn=lambda: "正在录音：系统正在同步提取您的全段面部表情...", outputs=[self.recording_status]
+        ).then(fn=lambda: setattr(self, 'is_recording', True))
 
-    print("🚀 [系统启动] 正在预加载多模态模型到 GPU 显存...")
+        self.audio_input.stop_recording(
+            fn=self.process_dialogue,
+            inputs=[self.audio_input, self.recognized_text],
+            outputs=[self.chat_display, self.recognized_text, self.sys_audio_output, 
+                     self.fusion_display, self.log_display, self.recording_status, self.gpu_memory],
+            queue=True
+        )
 
-    # 1. 预加载视觉模型
-    if VISION_AVAILABLE:
-        from modules.vision import get_detector
-        get_detector()  # 此调用会触发 ViT 模型的加载
-        print("✅ 视觉模块预加载完成")
+    async def process_video_stream(self, video_frame):
+        """处理视觉流，与原版毫无差异"""
+        if video_frame is None or time.time() - self.last_proc_time < 0.15:
+            return gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip()
+        self.last_proc_time = time.time()
 
-    # 2. 预加载音频asr和音频情感模型
-    if AUDIO_AVAILABLE:
-        from modules.audio import _get_model, _get_emotion_model
-        _get_model()    # 此调用会触发 Whisper 模型加载到 GPU
-        print("✅ 音频转录模型预加载完成")
-        _get_emotion_model()  # 此调用会触发 emotion2vec 模型加载到 GPU
-        print("✅ 音频情感分析模型预加载完成")
+        if self.is_asr_processing:
+            return (self.current_emotion, f"{self.visual_confidence:.2%}", self._get_emotion_bars(self.last_emotion_probs),
+                    self._frame_count_internal, time.strftime("%H:%M:%S"), "系统算力目前优先分配给语言大模型处理...", "--")
 
-    # 新增: 3. 预加载 LLM 模型
-    if LLM_AVAILABLE:
-        print("🚀 [系统启动] 正在预加载 Qwen LLM 模型...")
-        _get_llm_model()
-        print("✅ LLM 模型预加载完成")
+        try:
+            if VISION_AVAILABLE:
+                emotion, confidence, probs = await asyncio.to_thread(predict_emotion, video_frame, skip_frames=1)
+                self.current_emotion, self.visual_confidence, self.last_emotion_probs = emotion, confidence, probs
+                if self.is_recording:
+                    self.recording_emotion_buffer.append(emotion)
+        except Exception as e:
+            emotion, confidence, probs = self.current_emotion, self.visual_confidence, self.last_emotion_probs
 
-    print("🎉 所有模型预加载完成，启动 Gradio 界面...")
+        emotion_bars_html = self._get_emotion_bars(probs)
+        log_entry = f"[{time.strftime('%H:%M:%S')}] 视觉识别: {emotion} (置信度: {confidence:.2%})"
+        self.system_logs.append(log_entry)
+        if len(self.system_logs) > 50: self.system_logs.pop(0)
+        log_text = "\n".join(self.system_logs[-10:])
+        
+        self._frame_count_internal += 1
+        gpu_mem = monitor.get_resource_status().get("gpu_mem", "--") if MONITOR_AVAILABLE else "--"
 
-    # 3. 实例化界面
-    app = EmotionChatInterface()
+        return (emotion, f"{confidence:.2%}", emotion_bars_html, self._frame_count_internal, 
+                time.strftime("%H:%M:%S"), log_text, gpu_mem)
 
-    # 【必须开启】这是异步和并发的前提开关
-    app.interface.queue()
+    async def process_dialogue(self, audio_path, current_text):
+        """全链路推断 + 数据库拦截写入，完全保留原生输出结构"""
+        if not audio_path:
+            gpu_mem = monitor.get_resource_status().get("gpu_mem", "--") if MONITOR_AVAILABLE else "--"
+            return self.chat_history, current_text, None, "等待语音输入...", "\n".join(self.system_logs[-10:]), "请先录音", gpu_mem
 
-    # 启动服务
-    app.launch(
-        server_name="0.0.0.0",
-        server_port=7863,
-        share=True, 
-        show_error=True,
-        max_threads=40  # 增加线程池大小适配 L40S
-    )
+        try:
+            self.is_asr_processing = True
+            self.is_recording = False
 
+            # ASR 与 音频情感识别
+            user_text = await asyncio.to_thread(transcribe_audio, audio_path) if AUDIO_AVAILABLE else "[音频模块未加载]"
+            audio_emo, audio_conf, _ = await asyncio.to_thread(predict_audio_emotion, audio_path) if AUDIO_AVAILABLE else ("Neutral", 0.0, {})
+
+            # 视觉众数融合
+            if self.recording_emotion_buffer:
+                visual_decision = collections.Counter(self.recording_emotion_buffer).most_common(1)[0][0]
+                fusion_info = f"融合成功：提取录音期间 {len(self.recording_emotion_buffer)} 帧表情进行综合过滤，主要情绪：{visual_decision}"
+            else:
+                visual_decision = self.current_emotion
+                fusion_info = "由于未捕获录音期间的视频特征，采取最终时刻情绪基线。"
+            self.recording_emotion_buffer = []
+
+            # LLM 推理
+            if LLM_AVAILABLE:
+                llm_emotion, response_text = await asyncio.to_thread(
+                    generate_empathetic_response, user_text, visual_decision, audio_emo, visual_decision, self.chat_history
+                )
+            else:
+                llm_emotion, response_text = "Neutral", f"你说：{user_text}"
+
+            # TTS
+            audio_output_path = await generate_audio_reply(response_text) if TTS_AVAILABLE else None
+
+            # [静默执行] 数据库写入
+            if self.current_session_id:
+                db_manager.add_dialogue_turn(self.current_session_id, user_text, response_text, visual_decision, self.visual_confidence, audio_emo, audio_conf, llm_emotion)
+
+            fusion_text = f"多模态情感分析结果：\n📷 视觉判定基调: {visual_decision}\n🎤 音频情感检测: {audio_emo}\n🧠 大语言模型最终评估: {llm_emotion}"
+            
+            self.system_logs.extend([
+                f"[{time.strftime('%H:%M:%S')}] ASR文字转写: {user_text}",
+                f"[{time.strftime('%H:%M:%S')}] 录音视觉众数: {visual_decision}",
+                f"[{time.strftime('%H:%M:%S')}] 音频情感提取: {audio_emo}",
+                fusion_info,
+                f"[{time.strftime('%H:%M:%S')}] 模型最终判定: {llm_emotion}"
+            ])
+            if len(self.system_logs) > 50: self.system_logs = self.system_logs[-50:]
+
+            # 页面刷新：用数据库查询替代单纯的 append，确保数据绝对一致性
+            self.chat_history = db_manager.get_session_messages(self.current_session_id)
+            gpu_mem = monitor.get_resource_status().get("gpu_mem", "--") if MONITOR_AVAILABLE else "--"
+
+            return (self.chat_history, user_text, audio_output_path, fusion_text, 
+                    "\n".join(self.system_logs[-10:]), "多模态情感计算完成", gpu_mem)
+        finally:
+            self.is_asr_processing = False
 
 if __name__ == "__main__":
-    main()
- 
+    print("🚀 正在加载 AI 系统内核与数据库架构...")
+    if VISION_AVAILABLE: from modules.vision import get_detector; get_detector()
+    if AUDIO_AVAILABLE: from modules.audio import _get_model, _get_emotion_model; _get_model(); _get_emotion_model()
+    if LLM_AVAILABLE: from modules.llm import _get_llm_model; _get_llm_model()
+    
+    app = SystemInterface()
+    app.app.queue().launch(server_name="0.0.0.0", server_port=7863, share=True, max_threads=40)
