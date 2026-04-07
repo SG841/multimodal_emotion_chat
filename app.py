@@ -380,13 +380,14 @@ class SystemInterface:
             target = action or DEFAULT_USER_ACTION
             show_home = target in {"返回主页", DEFAULT_USER_ACTION}
             page_menu_value = "返回主页" if show_home else target
+            home_menu_value = DEFAULT_USER_ACTION if show_home else target
             return (
                 gr.update(visible=False),
                 gr.update(visible=show_home),
                 gr.update(visible=target == "个性化设置"),
                 gr.update(visible=target == "修改密码"),
                 gr.update(visible=target == "退出账号"),
-                gr.update(value=DEFAULT_USER_ACTION),
+                gr.update(value=home_menu_value),
                 gr.update(value=page_menu_value),
                 gr.update(value=page_menu_value),
                 gr.update(value=page_menu_value),
