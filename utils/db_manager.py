@@ -191,7 +191,17 @@ def get_session_messages(session_id):
         (session_id,),
     ).fetchall()
     conn.close()
-    return [{"role": m["role"], "content": m["content"]} for m in msgs]
+    history = []
+    current_user_text = None
+    for msg in msgs:
+        if msg["role"] == "user":
+            current_user_text = msg["content"]
+        elif msg["role"] == "assistant":
+            history.append((current_user_text or "", msg["content"]))
+            current_user_text = None
+    if current_user_text is not None:
+        history.append((current_user_text, None))
+    return history
 
 
 def export_session(session_id):
@@ -199,9 +209,11 @@ def export_session(session_id):
     export_path = os.path.join(os.path.dirname(DB_PATH), f"export_session_{session_id}.txt")
     with open(export_path, "w", encoding="utf-8") as file:
         file.write("=== 多模态共情对话系统导出记录 ===\n\n")
-        for msg in msgs:
-            role = "用户" if msg["role"] == "user" else "AI助手"
-            file.write(f"[{role}]: {msg['content']}\n\n")
+        for user_text, assistant_text in msgs:
+            if user_text:
+                file.write(f"[用户]: {user_text}\n\n")
+            if assistant_text:
+                file.write(f"[AI助手]: {assistant_text}\n\n")
     return export_path
 
 
