@@ -14,14 +14,17 @@ from config import ADMIN_INVITE_CODE
 from utils import db_manager
 
 USER_ACTIONS = ["个性化设置", "修改密码", "退出账号"]
-TTS_VOICE_OPTIONS = [
-    "zh-CN-XiaoxiaoNeural",
-    "zh-CN-YunxiNeural",
-    "zh-CN-YunyangNeural",
-    "zh-CN-XiaoyiNeural",
-    "zh-CN-liaoning-XiaobeiNeural",
-    "zh-CN-shaanxi-XiaoniNeural",
-]
+TTS_VOICE_PRESETS = {
+    "标准普通话": "zh-CN-XiaoxiaoNeural",
+    "广西口音近似": "zh-CN-XiaoxiaoNeural",
+    "中原汉语河南话近似": "zh-CN-XiaoxiaoDialectsNeural",
+    "东北普通话": "zh-CN-liaoning-XiaobeiNeural",
+    "陕西中原官话": "zh-CN-shaanxi-XiaoniNeural",
+    "西南普通话": "zh-CN-sichuan-YunxiNeural",
+    "粤语": "zh-HK-HiuMaanNeural",
+}
+TTS_VOICE_OPTIONS = list(TTS_VOICE_PRESETS.keys())
+VOICE_PREVIEW_TEXT = "你好，欢迎使用多模态情感感知共情对话系统，这是当前音色的试听示例。"
 
 try:
     from modules.vision import predict_emotion
@@ -93,9 +96,18 @@ class SystemInterface:
         self.current_user_profile = db_manager.get_user_profile(self.current_user_id)
         return self.current_user_profile
 
+    def _voice_choice_to_code(self, choice):
+        return TTS_VOICE_PRESETS.get(choice, TTS_VOICE_PRESETS["标准普通话"])
+
+    def _voice_code_to_choice(self, code):
+        for label, voice_code in TTS_VOICE_PRESETS.items():
+            if voice_code == code:
+                return label
+        return "标准普通话"
+
     def _current_voice(self):
         profile = self.current_user_profile or self._load_current_profile() or {}
-        return profile.get("preferred_tts_voice", TTS_VOICE_OPTIONS[0])
+        return self._voice_choice_to_code(profile.get("preferred_tts_voice", "标准普通话"))
 
     def _log_user_event(self, module_name, info, session_id=None):
         if self.current_user_id is None:
@@ -194,6 +206,13 @@ class SystemInterface:
             with gr.Column(visible=False) as self.user_page:
                 with gr.Row():
                     self.user_header_msg = gr.Markdown("### 欢迎使用系统")
+                    self.user_action_menu = gr.Dropdown(
+                        USER_ACTIONS,
+                        value="个性化设置",
+                        label="账户功能",
+                        interactive=True,
+                        scale=1,
+                    )
 
                 with gr.Row():
                     with gr.Column(scale=1, variant="panel"):
@@ -204,15 +223,15 @@ class SystemInterface:
                         self.btn_export = gr.Button("导出聊天记录")
                         self.export_file = gr.File(label="下载文件", interactive=False)
 
-                        with gr.Accordion("账户操作", open=False):
-                            self.user_action_menu = gr.Radio(USER_ACTIONS, value="个性化设置", label="请选择操作")
-
                         with gr.Column(visible=True) as self.user_profile_panel:
                             gr.Markdown("### 个性化设置")
                             self.user_profile_username = gr.Textbox(label="当前用户名", interactive=False)
                             self.user_nickname = gr.Textbox(label="昵称")
                             self.user_bio = gr.Textbox(label="个人资料", lines=4, placeholder="介绍一下自己或写下你的偏好")
-                            self.user_voice = gr.Dropdown(TTS_VOICE_OPTIONS, label="偏好音色", value=TTS_VOICE_OPTIONS[0], interactive=True)
+                            self.user_voice = gr.Dropdown(TTS_VOICE_OPTIONS, label="偏好音色", value="标准普通话", interactive=True)
+                            gr.Markdown("音色说明：广西、河南目前先使用公开可用音色做近似映射。")
+                            self.user_voice_preview_btn = gr.Button("试听当前音色", variant="secondary")
+                            self.user_voice_preview_audio = gr.Audio(label="音色试听", interactive=False)
                             self.user_profile_save_btn = gr.Button("保存个性化设置", variant="secondary")
                             self.user_profile_msg = gr.Markdown("")
 
@@ -339,7 +358,7 @@ class SystemInterface:
                 profile.get("username", self.current_username or ""),
                 profile.get("nickname", ""),
                 profile.get("bio", ""),
-                profile.get("preferred_tts_voice", TTS_VOICE_OPTIONS[0]),
+                self._voice_code_to_choice(profile.get("preferred_tts_voice", TTS_VOICE_PRESETS["标准普通话"])),
             )
 
         def handle_auth(mode, username, password, invite_code):
@@ -355,6 +374,7 @@ class SystemInterface:
                     msg, gr.update(), gr.update(), gr.update(), admin_table,
                     admin_selector, admin_password_user, admin_message,
                     gr.update(), gr.update(), gr.update(), gr.update(),
+                    gr.update(value="个性化设置"), gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
                 )
 
             success, uid, role = db_manager.login_user(username, password, expected_role=target_role)
@@ -364,6 +384,7 @@ class SystemInterface:
                     "账号、密码或登录类型不正确，请检查后重试", gr.update(), gr.update(), gr.update(), gr.update(),
                     gr.update(), gr.update(), gr.update(),
                     gr.update(), gr.update(), gr.update(), gr.update(),
+                    gr.update(value="个性化设置"), gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
                 )
 
             self.current_username = username
@@ -383,6 +404,7 @@ class SystemInterface:
                     gr.update(choices=session_choices, value=session_choices[0] if session_choices else None), gr.update(),
                     gr.update(), gr.update(), gr.update(),
                     profile_username, nickname, bio, voice,
+                    gr.update(value="个性化设置"), gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
                 )
 
             admin_table, admin_selector, admin_password_user, admin_message = refresh_admin_panels("管理员登录成功")
@@ -391,6 +413,7 @@ class SystemInterface:
                 "", gr.update(), "### 超级管理员后台授权成功",
                 gr.update(), admin_table, admin_selector, admin_password_user, admin_message,
                 gr.update(), gr.update(), gr.update(), gr.update(),
+                gr.update(value="个性化设置"), gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
             )
 
         def handle_new_session():
@@ -431,11 +454,19 @@ class SystemInterface:
             return msg
 
         def handle_save_profile(nickname, bio, voice):
-            success, msg = db_manager.update_user_profile(self.current_user_id, nickname, bio, voice)
+            voice_code = self._voice_choice_to_code(voice)
+            success, msg = db_manager.update_user_profile(self.current_user_id, nickname, bio, voice_code)
             if success:
                 self._load_current_profile()
                 self._log_user_event("profile", f"用户更新了个性化设置，音色={voice}", self.current_session_id)
             return msg
+
+        async def handle_voice_preview(voice_choice):
+            preview_audio = await generate_audio_reply(
+                VOICE_PREVIEW_TEXT,
+                voice=self._voice_choice_to_code(voice_choice),
+            ) if TTS_AVAILABLE else None
+            return preview_audio
 
         def handle_user_logout():
             self.current_user_id = None
@@ -479,6 +510,7 @@ class SystemInterface:
                 self.session_dropdown, self.admin_user_table,
                 self.admin_user_selector, self.admin_password_user, self.admin_password_msg,
                 self.user_profile_username, self.user_nickname, self.user_bio, self.user_voice,
+                self.user_action_menu, self.user_profile_panel, self.user_password_panel, self.user_logout_panel,
             ],
         )
 
