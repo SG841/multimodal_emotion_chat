@@ -4,7 +4,6 @@ import threading
 import time
 from typing import Dict, Optional
 
-# 模型配置
 VISION_MODEL = "/root/multimodal_emotion_chat/models/facial_emotions"
 VISION_SKIP_FRAMES = 1
 VISION_DEVICE = None

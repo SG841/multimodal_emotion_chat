@@ -69,6 +69,17 @@ class SystemInterface:
 
         self.create_interface()
 
+    def _get_gpu_mem(self):
+        return monitor.get_resource_status().get("gpu_mem", "--") if MONITOR_AVAILABLE else "--"
+
+    def _admin_user_choices(self):
+        return db_manager.get_user_choices(include_admin=True)
+
+    def _log_user_event(self, module_name, info, session_id=None):
+        if self.current_user_id is None:
+            return
+        db_manager.log_system_metric(module_name, self._get_gpu_mem(), info, user_id=self.current_user_id, session_id=session_id)
+
     def _get_custom_css(self) -> str:
         return """
         #emotion-display {
@@ -184,6 +195,13 @@ class SystemInterface:
                         self.btn_export = gr.Button("导出聊天记录")
                         self.export_file = gr.File(label="下载文件", interactive=False)
 
+                        gr.Markdown("### 修改密码")
+                        self.user_old_password = gr.Textbox(label="原密码", type="password")
+                        self.user_new_password = gr.Textbox(label="新密码", type="password")
+                        self.user_confirm_password = gr.Textbox(label="确认新密码", type="password")
+                        self.user_change_pwd_btn = gr.Button("修改我的密码", variant="secondary")
+                        self.user_password_msg = gr.Markdown("")
+
                     with gr.Column(scale=3):
                         gr.Markdown("### 视觉感知区")
                         self.video_input = gr.Image(sources=["webcam"], label="实时视频流", elem_id="video-stream")
@@ -230,11 +248,32 @@ class SystemInterface:
                         self.admin_user_table = gr.Dataframe(headers=["用户ID", "用户名", "角色", "注册时间"], interactive=False)
                         self.admin_refresh_btn = gr.Button("同步系统用户数据", variant="secondary")
                     with gr.Column(scale=1):
-                        gr.Markdown("#### 危险操作授权区")
+                        gr.Markdown("#### 删除用户")
                         gr.Markdown("删除会级联移除该普通用户的历史会话和多模态数据，管理员账号不允许删除。")
                         self.admin_target_id = gr.Number(label="请输入目标用户ID", precision=0)
                         self.admin_delete_btn = gr.Button("删除该用户", variant="stop")
                         self.admin_msg = gr.Markdown("")
+
+                gr.Markdown("### 用户监控与日志")
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        self.admin_user_selector = gr.Dropdown(label="选择要监控的用户", choices=self._admin_user_choices(), interactive=True)
+                        self.admin_refresh_monitor_btn = gr.Button("刷新该用户监控数据", variant="secondary")
+                        self.admin_user_summary = gr.Textbox(label="用户使用概览", lines=8, interactive=False)
+                        self.admin_user_gpu = gr.Textbox(label="当前服务器 GPU 显存占用", value="-- MB", interactive=False)
+                    with gr.Column(scale=2):
+                        self.admin_user_logs = gr.Textbox(label="该用户的监控日志", lines=16, max_lines=20, interactive=False, autoscroll=True)
+
+                gr.Markdown("### 管理员修改用户密码")
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        self.admin_password_user = gr.Dropdown(label="选择要改密的用户", choices=self._admin_user_choices(), interactive=True)
+                    with gr.Column(scale=1):
+                        self.admin_new_password = gr.Textbox(label="新密码", type="password")
+                    with gr.Column(scale=1):
+                        self.admin_confirm_password = gr.Textbox(label="确认新密码", type="password")
+                self.admin_change_pwd_btn = gr.Button("修改用户密码", variant="secondary")
+                self.admin_password_msg = gr.Markdown("")
 
             self.bind_events()
 
@@ -255,6 +294,15 @@ class SystemInterface:
                 helper_text = ""
             return gr.update(visible=need_invite, value=""), gr.update(value=button_text), helper_text
 
+        def refresh_admin_panels(message=""):
+            user_choices = self._admin_user_choices()
+            return (
+                gr.update(value=db_manager.get_all_users_for_admin()),
+                gr.update(choices=user_choices),
+                gr.update(choices=user_choices),
+                message,
+            )
+
         def handle_auth(mode, username, password, invite_code):
             role_map = {
                 "用户登录": "user",
@@ -267,16 +315,19 @@ class SystemInterface:
 
             if is_register:
                 _, msg = db_manager.register_user(username, password, role=target_role, invite_code=invite_code)
+                admin_table, admin_selector, admin_password_user, admin_message = refresh_admin_panels(msg)
                 return (
                     gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
-                    msg, gr.update(), gr.update(), gr.update(), gr.update()
+                    msg, gr.update(), gr.update(), gr.update(), admin_table,
+                    admin_selector, admin_password_user, admin_message,
                 )
 
             success, uid, role = db_manager.login_user(username, password, expected_role=target_role)
             if not success:
                 return (
                     gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
-                    "账号、密码或登录类型不正确，请检查后重试", gr.update(), gr.update(), gr.update(), gr.update()
+                    "账号、密码或登录类型不正确，请检查后重试", gr.update(), gr.update(), gr.update(), gr.update(),
+                    gr.update(), gr.update(), gr.update(),
                 )
 
             self.current_username = username
@@ -287,43 +338,20 @@ class SystemInterface:
                 self.chat_history = []
                 sessions_map = db_manager.get_user_sessions(uid)
                 session_choices = list(sessions_map.keys())
+                self._log_user_event("auth", f"用户 {username} 登录成功并创建默认会话", self.current_session_id)
                 return (
                     gr.update(visible=False), gr.update(visible=True), gr.update(visible=False),
                     "", f"### 欢迎回来，{username}", gr.update(),
-                    gr.update(choices=session_choices, value=session_choices[0] if session_choices else None),
-                    gr.update()
+                    gr.update(choices=session_choices, value=session_choices[0] if session_choices else None), gr.update(),
+                    gr.update(), gr.update(), gr.update(),
                 )
 
-            admin_data = db_manager.get_all_users_for_admin()
+            admin_table, admin_selector, admin_password_user, admin_message = refresh_admin_panels("管理员登录成功")
             return (
                 gr.update(visible=False), gr.update(visible=False), gr.update(visible=True),
                 "", gr.update(), "### 超级管理员后台授权成功",
-                gr.update(), gr.update(value=admin_data)
+                gr.update(), admin_table, admin_selector, admin_password_user, admin_message,
             )
-
-        self.auth_mode.change(
-            update_auth_form,
-            inputs=[self.auth_mode],
-            outputs=[self.invite_code, self.btn_auth, self.login_msg]
-        )
-        self.btn_auth.click(
-            handle_auth,
-            [self.auth_mode, self.login_user, self.login_pwd, self.invite_code],
-            [
-                self.login_page, self.user_page, self.admin_page,
-                self.login_msg, self.user_header_msg, self.admin_header_msg,
-                self.session_dropdown, self.admin_user_table,
-            ],
-        )
-
-        self.btn_user_logout.click(
-            lambda: (gr.update(visible=True), gr.update(visible=False)),
-            outputs=[self.login_page, self.user_page],
-        )
-        self.btn_admin_logout.click(
-            lambda: (gr.update(visible=True), gr.update(visible=False)),
-            outputs=[self.login_page, self.admin_page],
-        )
 
         def handle_new_session():
             self.current_session_id = db_manager.create_session(self.current_user_id)
@@ -331,6 +359,7 @@ class SystemInterface:
             self.system_logs = ["对话已清空并创建新会话"]
             sessions_map = db_manager.get_user_sessions(self.current_user_id)
             session_choices = list(sessions_map.keys())
+            self._log_user_event("session", "用户创建了新会话", self.current_session_id)
             return gr.update(choices=session_choices, value=session_choices[0]), self.chat_history, "", None, "对话已清空"
 
         def show_example():
@@ -351,20 +380,98 @@ class SystemInterface:
         def handle_export():
             if self.current_session_id:
                 path = db_manager.export_session(self.current_session_id)
+                self._log_user_event("export", f"导出了会话记录: {self.current_session_id}", self.current_session_id)
                 return gr.update(value=path, visible=True)
             return gr.update()
+
+        def handle_user_change_password(old_pwd, new_pwd, confirm_pwd):
+            if new_pwd != confirm_pwd:
+                return "两次输入的新密码不一致"
+            success, msg = db_manager.change_password(self.current_user_id, old_pwd, new_pwd)
+            if success:
+                self._log_user_event("password", "用户修改了自己的密码", self.current_session_id)
+            return msg
+
+        def handle_admin_delete(uid):
+            result = db_manager.admin_delete_user(uid)
+            admin_table, admin_selector, admin_password_user, _ = refresh_admin_panels()
+            return admin_table, result, admin_selector, admin_password_user
+
+        def handle_admin_change_password(user_choice, new_pwd, confirm_pwd):
+            if new_pwd != confirm_pwd:
+                admin_table, admin_selector, admin_password_user, _ = refresh_admin_panels()
+                return admin_table, admin_selector, admin_password_user, "两次输入的新密码不一致"
+            target_user_id = db_manager.parse_user_choice(user_choice)
+            if target_user_id is None:
+                admin_table, admin_selector, admin_password_user, _ = refresh_admin_panels()
+                return admin_table, admin_selector, admin_password_user, "请选择目标用户"
+            _, msg = db_manager.admin_reset_password(target_user_id, new_pwd)
+            db_manager.log_system_metric("admin_password", self._get_gpu_mem(), f"管理员修改了用户 {target_user_id} 的密码", user_id=target_user_id)
+            admin_table, admin_selector, admin_password_user, _ = refresh_admin_panels()
+            return admin_table, admin_selector, admin_password_user, msg
+
+        def handle_admin_monitor(user_choice):
+            user_id = db_manager.parse_user_choice(user_choice)
+            if user_id is None:
+                return "请选择一个用户", "暂无监控日志", self._get_gpu_mem()
+            summary = db_manager.get_user_activity_summary(user_id)
+            logs = db_manager.get_user_metrics(user_id)
+            return summary, logs, self._get_gpu_mem()
+
+        self.auth_mode.change(
+            update_auth_form,
+            inputs=[self.auth_mode],
+            outputs=[self.invite_code, self.btn_auth, self.login_msg],
+        )
+        self.btn_auth.click(
+            handle_auth,
+            [self.auth_mode, self.login_user, self.login_pwd, self.invite_code],
+            [
+                self.login_page, self.user_page, self.admin_page,
+                self.login_msg, self.user_header_msg, self.admin_header_msg,
+                self.session_dropdown, self.admin_user_table,
+                self.admin_user_selector, self.admin_password_user, self.admin_password_msg,
+            ],
+        )
+
+        self.btn_user_logout.click(
+            lambda: (gr.update(visible=True), gr.update(visible=False)),
+            outputs=[self.login_page, self.user_page],
+        )
+        self.btn_admin_logout.click(
+            lambda: (gr.update(visible=True), gr.update(visible=False)),
+            outputs=[self.login_page, self.admin_page],
+        )
 
         self.btn_new_session.click(handle_new_session, outputs=[self.session_dropdown, self.chat_display, self.recognized_text, self.sys_audio_output, self.log_display])
         self.clear_btn.click(handle_new_session, outputs=[self.session_dropdown, self.chat_display, self.recognized_text, self.sys_audio_output, self.log_display])
         self.example_btn.click(show_example, outputs=[self.chat_display])
         self.session_dropdown.change(handle_load_session, inputs=[self.session_dropdown], outputs=[self.chat_display])
         self.btn_export.click(handle_export, outputs=[self.export_file])
+        self.user_change_pwd_btn.click(
+            handle_user_change_password,
+            inputs=[self.user_old_password, self.user_new_password, self.user_confirm_password],
+            outputs=[self.user_password_msg],
+        )
 
-        self.admin_refresh_btn.click(lambda: db_manager.get_all_users_for_admin(), outputs=[self.admin_user_table])
+        self.admin_refresh_btn.click(
+            lambda: db_manager.get_all_users_for_admin(),
+            outputs=[self.admin_user_table],
+        )
         self.admin_delete_btn.click(
-            lambda uid: (db_manager.get_all_users_for_admin(), db_manager.admin_delete_user(uid)),
+            handle_admin_delete,
             inputs=[self.admin_target_id],
-            outputs=[self.admin_user_table, self.admin_msg],
+            outputs=[self.admin_user_table, self.admin_msg, self.admin_user_selector, self.admin_password_user],
+        )
+        self.admin_refresh_monitor_btn.click(
+            handle_admin_monitor,
+            inputs=[self.admin_user_selector],
+            outputs=[self.admin_user_summary, self.admin_user_logs, self.admin_user_gpu],
+        )
+        self.admin_change_pwd_btn.click(
+            handle_admin_change_password,
+            inputs=[self.admin_password_user, self.admin_new_password, self.admin_confirm_password],
+            outputs=[self.admin_user_table, self.admin_user_selector, self.admin_password_user, self.admin_password_msg],
         )
 
         self.video_input.stream(
@@ -422,14 +529,11 @@ class SystemInterface:
         log_text = "\n".join(self.system_logs[-10:])
 
         self._frame_count_internal += 1
-        gpu_mem = monitor.get_resource_status().get("gpu_mem", "--") if MONITOR_AVAILABLE else "--"
-
-        return emotion, f"{confidence:.2%}", emotion_bars_html, self._frame_count_internal, time.strftime("%H:%M:%S"), log_text, gpu_mem
+        return emotion, f"{confidence:.2%}", emotion_bars_html, self._frame_count_internal, time.strftime("%H:%M:%S"), log_text, self._get_gpu_mem()
 
     async def process_dialogue(self, audio_path, current_text):
         if not audio_path:
-            gpu_mem = monitor.get_resource_status().get("gpu_mem", "--") if MONITOR_AVAILABLE else "--"
-            return self.chat_history, current_text, None, "等待语音输入...", "\n".join(self.system_logs[-10:]), "请先录音", gpu_mem
+            return self.chat_history, current_text, None, "等待语音输入...", "\n".join(self.system_logs[-10:]), "请先录音", self._get_gpu_mem()
 
         try:
             self.is_asr_processing = True
@@ -473,9 +577,7 @@ class SystemInterface:
                 )
                 self.chat_history = db_manager.get_session_messages(self.current_session_id)
             else:
-                self.chat_history = self.chat_history + [
-                    (user_text, response_text),
-                ]
+                self.chat_history = self.chat_history + [(user_text, response_text)]
 
             fusion_text = (
                 "多模态情感分析结果：\n"
@@ -494,8 +596,13 @@ class SystemInterface:
             if len(self.system_logs) > 50:
                 self.system_logs = self.system_logs[-50:]
 
-            gpu_mem = monitor.get_resource_status().get("gpu_mem", "--") if MONITOR_AVAILABLE else "--"
-            return self.chat_history, user_text, audio_output_path, fusion_text, "\n".join(self.system_logs[-10:]), "多模态情感计算完成", gpu_mem
+            self._log_user_event(
+                "dialogue",
+                f"完成一次多模态对话。文本='{user_text[:30]}'，视觉={visual_decision}，音频={audio_emo}，最终={llm_emotion}",
+                self.current_session_id,
+            )
+
+            return self.chat_history, user_text, audio_output_path, fusion_text, "\n".join(self.system_logs[-10:]), "多模态情感计算完成", self._get_gpu_mem()
         finally:
             self.is_asr_processing = False
 

@@ -1,7 +1,4 @@
-"""
-utils/db_manager.py
-系统级关系型数据库管理模块 (SQLite3)
-"""
+"""系统级关系型数据库管理模块 (SQLite3)。"""
 
 import hashlib
 import os
@@ -81,15 +78,25 @@ def init_db():
         """CREATE TABLE IF NOT EXISTS system_metrics (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        user_id INTEGER,
+        session_id INTEGER,
         module_name TEXT,
         gpu_memory_used TEXT,
-        info TEXT
+        info TEXT,
+        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
     )"""
     )
 
     user_columns = [row["name"] for row in cursor.execute("PRAGMA table_info(users)").fetchall()]
     if "role" not in user_columns:
         cursor.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'")
+
+    metric_columns = [row["name"] for row in cursor.execute("PRAGMA table_info(system_metrics)").fetchall()]
+    if "user_id" not in metric_columns:
+        cursor.execute("ALTER TABLE system_metrics ADD COLUMN user_id INTEGER")
+    if "session_id" not in metric_columns:
+        cursor.execute("ALTER TABLE system_metrics ADD COLUMN session_id INTEGER")
 
     conn.commit()
     conn.close()
@@ -106,7 +113,7 @@ def register_user(username, password, role="user", invite_code=None):
     if role not in ("user", "admin"):
         return False, "账户类型无效"
     if not username or len(password) < 4:
-        return False, "格式错误"
+        return False, "用户名不能为空，且密码长度不能小于 4 位"
     if role == "admin" and invite_code != ADMIN_INVITE_CODE:
         return False, "管理员邀请码错误"
 
@@ -226,6 +233,69 @@ def get_all_users_for_admin():
     return [[row["id"], row["username"], row["role"], row["created_at"]] for row in rows]
 
 
+def get_user_choices(include_admin=True):
+    conn = get_connection()
+    if include_admin:
+        rows = conn.execute("SELECT id, username, role FROM users ORDER BY id ASC").fetchall()
+    else:
+        rows = conn.execute("SELECT id, username, role FROM users WHERE role='user' ORDER BY id ASC").fetchall()
+    conn.close()
+    return [f"{row['id']} - {row['username']} ({row['role']})" for row in rows]
+
+
+def parse_user_choice(choice):
+    if not choice:
+        return None
+    try:
+        return int(str(choice).split(" - ", 1)[0])
+    except (TypeError, ValueError):
+        return None
+
+
+def change_password(user_id, old_password, new_password):
+    if not new_password or len(new_password) < 4:
+        return False, "新密码长度不能小于 4 位"
+
+    conn = get_connection()
+    user = conn.execute(
+        "SELECT password_hash FROM users WHERE id=?",
+        (user_id,),
+    ).fetchone()
+    if not user:
+        conn.close()
+        return False, "用户不存在"
+    if user["password_hash"] != hash_password(old_password):
+        conn.close()
+        return False, "原密码错误"
+
+    conn.execute(
+        "UPDATE users SET password_hash=? WHERE id=?",
+        (hash_password(new_password), user_id),
+    )
+    conn.commit()
+    conn.close()
+    return True, "密码修改成功"
+
+
+def admin_reset_password(target_user_id, new_password):
+    if not new_password or len(new_password) < 4:
+        return False, "新密码长度不能小于 4 位"
+
+    conn = get_connection()
+    user = conn.execute("SELECT id FROM users WHERE id=?", (target_user_id,)).fetchone()
+    if not user:
+        conn.close()
+        return False, "目标用户不存在"
+
+    conn.execute(
+        "UPDATE users SET password_hash=? WHERE id=?",
+        (hash_password(new_password), target_user_id),
+    )
+    conn.commit()
+    conn.close()
+    return True, f"已成功修改用户 {target_user_id} 的密码"
+
+
 def admin_delete_user(user_id):
     conn = get_connection()
     target = conn.execute("SELECT role FROM users WHERE id=?", (user_id,)).fetchone()
@@ -242,11 +312,76 @@ def admin_delete_user(user_id):
     return f"已成功删除用户ID: {user_id}"
 
 
-def log_system_metric(module, gpu_mem, info):
+def log_system_metric(module, gpu_mem, info, user_id=None, session_id=None):
     conn = get_connection()
     conn.execute(
-        "INSERT INTO system_metrics (module_name, gpu_memory_used, info) VALUES (?, ?, ?)",
-        (module, gpu_mem, info),
+        "INSERT INTO system_metrics (module_name, gpu_memory_used, info, user_id, session_id) VALUES (?, ?, ?, ?, ?)",
+        (module, gpu_mem, info, user_id, session_id),
     )
     conn.commit()
     conn.close()
+
+
+def get_user_activity_summary(user_id):
+    conn = get_connection()
+    user = conn.execute(
+        "SELECT id, username, role, created_at FROM users WHERE id=?",
+        (user_id,),
+    ).fetchone()
+    if not user:
+        conn.close()
+        return "未找到该用户"
+
+    session_count = conn.execute(
+        "SELECT COUNT(*) AS count FROM sessions WHERE user_id=?",
+        (user_id,),
+    ).fetchone()["count"]
+    message_count = conn.execute(
+        "SELECT COUNT(*) AS count FROM messages m JOIN sessions s ON m.session_id=s.id WHERE s.user_id=?",
+        (user_id,),
+    ).fetchone()["count"]
+    latest_session = conn.execute(
+        "SELECT start_time FROM sessions WHERE user_id=? ORDER BY id DESC LIMIT 1",
+        (user_id,),
+    ).fetchone()
+    latest_metric = conn.execute(
+        "SELECT timestamp FROM system_metrics WHERE user_id=? ORDER BY id DESC LIMIT 1",
+        (user_id,),
+    ).fetchone()
+    conn.close()
+
+    latest_session_text = latest_session["start_time"] if latest_session else "无"
+    latest_metric_text = latest_metric["timestamp"] if latest_metric else "无"
+    return (
+        f"用户ID: {user['id']}\n"
+        f"用户名: {user['username']}\n"
+        f"角色: {user['role']}\n"
+        f"注册时间: {user['created_at']}\n"
+        f"会话数量: {session_count}\n"
+        f"消息数量: {message_count}\n"
+        f"最近会话时间: {latest_session_text}\n"
+        f"最近监控记录时间: {latest_metric_text}"
+    )
+
+
+def get_user_metrics(user_id, limit=20):
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT timestamp, module_name, gpu_memory_used, info, session_id
+        FROM system_metrics
+        WHERE user_id=?
+        ORDER BY id DESC
+        LIMIT ?""",
+        (user_id, limit),
+    ).fetchall()
+    conn.close()
+    if not rows:
+        return "暂无该用户的监控记录"
+
+    lines = []
+    for row in rows:
+        session_text = f"会话ID={row['session_id']}" if row["session_id"] else "无会话"
+        lines.append(
+            f"[{row['timestamp']}] 模块={row['module_name']} | GPU={row['gpu_memory_used']} | {session_text} | {row['info']}"
+        )
+    return "\n".join(lines)
