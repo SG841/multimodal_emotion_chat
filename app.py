@@ -107,7 +107,10 @@ class SystemInterface:
 
     def _current_voice(self):
         profile = self.current_user_profile or self._load_current_profile() or {}
-        return self._voice_choice_to_code(profile.get("preferred_tts_voice", "标准普通话"))
+        preferred_voice = profile.get("preferred_tts_voice", TTS_VOICE_PRESETS["标准普通话"])
+        if preferred_voice in TTS_VOICE_PRESETS.values():
+            return preferred_voice
+        return self._voice_choice_to_code(preferred_voice)
 
     def _log_user_event(self, module_name, info, session_id=None):
         if self.current_user_id is None:
