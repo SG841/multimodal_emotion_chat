@@ -14,6 +14,7 @@ from config import ADMIN_INVITE_CODE
 from utils import db_manager
 
 USER_ACTIONS = ["个性化设置", "修改密码", "退出账号"]
+ACCOUNT_PAGE_ACTIONS = ["返回主页"] + USER_ACTIONS
 TTS_VOICE_PRESETS = {
     "标准普通话": "zh-CN-XiaoxiaoNeural",
     "广西口音近似": "zh-CN-XiaoxiaoNeural",
@@ -223,7 +224,7 @@ class SystemInterface:
                         self.btn_export = gr.Button("导出聊天记录")
                         self.export_file = gr.File(label="下载文件", interactive=False)
 
-                        with gr.Column(visible=True) as self.user_profile_panel:
+                        with gr.Column(visible=False) as self.user_profile_panel:
                             gr.Markdown("### 个性化设置")
                             self.user_profile_username = gr.Textbox(label="当前用户名", interactive=False)
                             self.user_nickname = gr.Textbox(label="昵称")
@@ -231,7 +232,7 @@ class SystemInterface:
                             self.user_voice = gr.Dropdown(TTS_VOICE_OPTIONS, label="偏好音色", value="标准普通话", interactive=True)
                             gr.Markdown("音色说明：广西、河南目前先使用公开可用音色做近似映射。")
                             self.user_voice_preview_btn = gr.Button("试听当前音色", variant="secondary")
-                            self.user_voice_preview_audio = gr.Audio(label="音色试听", interactive=False)
+                            self.user_voice_preview_audio = gr.Audio(label="音色试听", interactive=False, autoplay=True)
                             self.user_profile_save_btn = gr.Button("保存个性化设置", variant="secondary")
                             self.user_profile_msg = gr.Markdown("")
 
@@ -282,6 +283,37 @@ class SystemInterface:
                         self.log_display = gr.Textbox(label="系统运行日志", value="系统初始化完成...", interactive=False, lines=8, max_lines=10, autoscroll=True)
                         with gr.Row():
                             self.gpu_memory = gr.Textbox(label="GPU 显存占用", value="-- MB", interactive=False)
+
+            with gr.Column(visible=False) as self.user_profile_page:
+                with gr.Row():
+                    self.user_profile_page_header = gr.Markdown("### 个性化设置")
+                    self.user_profile_page_menu = gr.Dropdown(ACCOUNT_PAGE_ACTIONS, value="个性化设置", label="账户功能", interactive=True, scale=1)
+                self.user_profile_page_username = gr.Textbox(label="当前用户名", interactive=False)
+                self.user_profile_page_nickname = gr.Textbox(label="昵称")
+                self.user_profile_page_bio = gr.Textbox(label="个人资料", lines=4, placeholder="介绍一下自己或写下你的偏好")
+                self.user_profile_page_voice = gr.Dropdown(TTS_VOICE_OPTIONS, label="偏好音色", value="标准普通话", interactive=True)
+                self.user_profile_page_preview_btn = gr.Button("试听当前音色", variant="secondary")
+                self.user_profile_page_preview_audio = gr.Audio(label="音色试听", interactive=False, autoplay=True)
+                self.user_profile_page_save_btn = gr.Button("保存个性化设置", variant="primary")
+                self.user_profile_page_msg = gr.Markdown("")
+
+            with gr.Column(visible=False) as self.user_password_page:
+                with gr.Row():
+                    self.user_password_page_header = gr.Markdown("### 修改密码")
+                    self.user_password_page_menu = gr.Dropdown(ACCOUNT_PAGE_ACTIONS, value="修改密码", label="账户功能", interactive=True, scale=1)
+                self.user_password_page_old_password = gr.Textbox(label="原密码", type="password")
+                self.user_password_page_new_password = gr.Textbox(label="新密码", type="password")
+                self.user_password_page_confirm_password = gr.Textbox(label="确认新密码", type="password")
+                self.user_password_page_btn = gr.Button("修改我的密码", variant="primary")
+                self.user_password_page_msg = gr.Markdown("")
+
+            with gr.Column(visible=False) as self.user_logout_page:
+                with gr.Row():
+                    self.user_logout_page_header = gr.Markdown("### 退出账号")
+                    self.user_logout_page_menu = gr.Dropdown(ACCOUNT_PAGE_ACTIONS, value="退出账号", label="账户功能", interactive=True, scale=1)
+                gr.Markdown("点击下方按钮后将退出当前账号，并返回登录界面。")
+                self.user_logout_page_btn = gr.Button("确认退出账号", variant="stop")
+                self.user_logout_page_msg = gr.Markdown("")
 
             with gr.Column(visible=False) as self.admin_page:
                 with gr.Row():
@@ -345,11 +377,18 @@ class SystemInterface:
             user_choices = self._admin_user_choices()
             return gr.update(value=db_manager.get_all_users_for_admin()), gr.update(choices=user_choices), gr.update(choices=user_choices), message
 
-        def get_user_panel_updates(action):
+        def route_user_page(action):
+            target = action or "返回主页"
             return (
-                gr.update(visible=action == "个性化设置"),
-                gr.update(visible=action == "修改密码"),
-                gr.update(visible=action == "退出账号"),
+                gr.update(visible=False),
+                gr.update(visible=target == "返回主页"),
+                gr.update(visible=target == "个性化设置"),
+                gr.update(visible=target == "修改密码"),
+                gr.update(visible=target == "退出账号"),
+                gr.update(value="个性化设置"),
+                gr.update(value=target),
+                gr.update(value=target),
+                gr.update(value=target),
             )
 
         def load_user_preferences():
@@ -370,21 +409,27 @@ class SystemInterface:
                 _, msg = db_manager.register_user(username, password, role=target_role, invite_code=invite_code)
                 admin_table, admin_selector, admin_password_user, admin_message = refresh_admin_panels(msg)
                 return (
-                    gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
+                    gr.update(visible=True), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False),
                     msg, gr.update(), gr.update(), gr.update(), admin_table,
                     admin_selector, admin_password_user, admin_message,
                     gr.update(), gr.update(), gr.update(), gr.update(),
-                    gr.update(value="个性化设置"), gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
+                    gr.update(value="个性化设置"),
+                    gr.update(value="个性化设置"),
+                    gr.update(value="修改密码"),
+                    gr.update(value="退出账号"),
                 )
 
             success, uid, role = db_manager.login_user(username, password, expected_role=target_role)
             if not success:
                 return (
-                    gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
+                    gr.update(visible=True), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False),
                     "账号、密码或登录类型不正确，请检查后重试", gr.update(), gr.update(), gr.update(), gr.update(),
                     gr.update(), gr.update(), gr.update(),
                     gr.update(), gr.update(), gr.update(), gr.update(),
-                    gr.update(value="个性化设置"), gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
+                    gr.update(value="个性化设置"),
+                    gr.update(value="个性化设置"),
+                    gr.update(value="修改密码"),
+                    gr.update(value="退出账号"),
                 )
 
             self.current_username = username
@@ -399,21 +444,27 @@ class SystemInterface:
                 self._log_user_event("auth", f"用户 {username} 登录成功并创建默认会话", self.current_session_id)
                 profile_username, nickname, bio, voice = load_user_preferences()
                 return (
-                    gr.update(visible=False), gr.update(visible=True), gr.update(visible=False),
+                    gr.update(visible=False), gr.update(visible=True), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False),
                     "", f"### 欢迎回来，{username}", gr.update(),
                     gr.update(choices=session_choices, value=session_choices[0] if session_choices else None), gr.update(),
                     gr.update(), gr.update(), gr.update(),
                     profile_username, nickname, bio, voice,
-                    gr.update(value="个性化设置"), gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
+                    gr.update(value="个性化设置"),
+                    gr.update(value="个性化设置"),
+                    gr.update(value="修改密码"),
+                    gr.update(value="退出账号"),
                 )
 
             admin_table, admin_selector, admin_password_user, admin_message = refresh_admin_panels("管理员登录成功")
             return (
-                gr.update(visible=False), gr.update(visible=False), gr.update(visible=True),
+                gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=True),
                 "", gr.update(), "### 超级管理员后台授权成功",
                 gr.update(), admin_table, admin_selector, admin_password_user, admin_message,
                 gr.update(), gr.update(), gr.update(), gr.update(),
-                gr.update(value="个性化设置"), gr.update(visible=True), gr.update(visible=False), gr.update(visible=False),
+                gr.update(value="个性化设置"),
+                gr.update(value="个性化设置"),
+                gr.update(value="修改密码"),
+                gr.update(value="退出账号"),
             )
 
         def handle_new_session():
@@ -474,7 +525,14 @@ class SystemInterface:
             self.current_session_id = None
             self.current_user_profile = None
             self.chat_history = []
-            return gr.update(visible=True), gr.update(visible=False), "已退出当前账号"
+            return (
+                gr.update(visible=True),
+                gr.update(visible=False),
+                gr.update(visible=False),
+                gr.update(visible=False),
+                gr.update(visible=False),
+                "已退出当前账号",
+            )
 
         def handle_admin_delete(uid):
             result = db_manager.admin_delete_user(uid)
@@ -505,17 +563,79 @@ class SystemInterface:
             handle_auth,
             [self.auth_mode, self.login_user, self.login_pwd, self.invite_code],
             [
-                self.login_page, self.user_page, self.admin_page,
+                self.login_page, self.user_page, self.user_profile_page, self.user_password_page, self.user_logout_page, self.admin_page,
                 self.login_msg, self.user_header_msg, self.admin_header_msg,
                 self.session_dropdown, self.admin_user_table,
                 self.admin_user_selector, self.admin_password_user, self.admin_password_msg,
-                self.user_profile_username, self.user_nickname, self.user_bio, self.user_voice,
-                self.user_action_menu, self.user_profile_panel, self.user_password_panel, self.user_logout_panel,
+                self.user_profile_page_username, self.user_profile_page_nickname, self.user_profile_page_bio, self.user_profile_page_voice,
+                self.user_action_menu, self.user_profile_page_menu, self.user_password_page_menu, self.user_logout_page_menu,
             ],
         )
 
-        self.user_action_menu.change(get_user_panel_updates, inputs=[self.user_action_menu], outputs=[self.user_profile_panel, self.user_password_panel, self.user_logout_panel])
-        self.btn_user_logout.click(handle_user_logout, outputs=[self.login_page, self.user_page, self.user_logout_msg])
+        self.user_action_menu.change(
+            route_user_page,
+            inputs=[self.user_action_menu],
+            outputs=[
+                self.login_page,
+                self.user_page,
+                self.user_profile_page,
+                self.user_password_page,
+                self.user_logout_page,
+                self.user_action_menu,
+                self.user_profile_page_menu,
+                self.user_password_page_menu,
+                self.user_logout_page_menu,
+            ],
+        )
+        self.user_profile_page_menu.change(
+            route_user_page,
+            inputs=[self.user_profile_page_menu],
+            outputs=[
+                self.login_page,
+                self.user_page,
+                self.user_profile_page,
+                self.user_password_page,
+                self.user_logout_page,
+                self.user_action_menu,
+                self.user_profile_page_menu,
+                self.user_password_page_menu,
+                self.user_logout_page_menu,
+            ],
+        )
+        self.user_password_page_menu.change(
+            route_user_page,
+            inputs=[self.user_password_page_menu],
+            outputs=[
+                self.login_page,
+                self.user_page,
+                self.user_profile_page,
+                self.user_password_page,
+                self.user_logout_page,
+                self.user_action_menu,
+                self.user_profile_page_menu,
+                self.user_password_page_menu,
+                self.user_logout_page_menu,
+            ],
+        )
+        self.user_logout_page_menu.change(
+            route_user_page,
+            inputs=[self.user_logout_page_menu],
+            outputs=[
+                self.login_page,
+                self.user_page,
+                self.user_profile_page,
+                self.user_password_page,
+                self.user_logout_page,
+                self.user_action_menu,
+                self.user_profile_page_menu,
+                self.user_password_page_menu,
+                self.user_logout_page_menu,
+            ],
+        )
+        self.user_logout_page_btn.click(
+            handle_user_logout,
+            outputs=[self.login_page, self.user_page, self.user_profile_page, self.user_password_page, self.user_logout_page, self.login_msg],
+        )
         self.btn_admin_logout.click(lambda: (gr.update(visible=True), gr.update(visible=False)), outputs=[self.login_page, self.admin_page])
 
         self.btn_new_session.click(handle_new_session, outputs=[self.session_dropdown, self.chat_display, self.recognized_text, self.sys_audio_output, self.log_display])
@@ -523,8 +643,21 @@ class SystemInterface:
         self.example_btn.click(show_example, outputs=[self.chat_display])
         self.session_dropdown.change(handle_load_session, inputs=[self.session_dropdown], outputs=[self.chat_display])
         self.btn_export.click(handle_export, outputs=[self.export_file])
-        self.user_change_pwd_btn.click(handle_user_change_password, inputs=[self.user_old_password, self.user_new_password, self.user_confirm_password], outputs=[self.user_password_msg])
-        self.user_profile_save_btn.click(handle_save_profile, inputs=[self.user_nickname, self.user_bio, self.user_voice], outputs=[self.user_profile_msg])
+        self.user_password_page_btn.click(
+            handle_user_change_password,
+            inputs=[self.user_password_page_old_password, self.user_password_page_new_password, self.user_password_page_confirm_password],
+            outputs=[self.user_password_page_msg],
+        )
+        self.user_profile_page_save_btn.click(
+            handle_save_profile,
+            inputs=[self.user_profile_page_nickname, self.user_profile_page_bio, self.user_profile_page_voice],
+            outputs=[self.user_profile_page_msg],
+        )
+        self.user_profile_page_preview_btn.click(
+            handle_voice_preview,
+            inputs=[self.user_profile_page_voice],
+            outputs=[self.user_profile_page_preview_audio],
+        )
 
         self.admin_refresh_btn.click(lambda: db_manager.get_all_users_for_admin(), outputs=[self.admin_user_table])
         self.admin_delete_btn.click(handle_admin_delete, inputs=[self.admin_target_id], outputs=[self.admin_user_table, self.admin_msg, self.admin_user_selector, self.admin_password_user])
