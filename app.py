@@ -739,7 +739,9 @@ class SystemInterface:
             else:
                 llm_emotion, response_text = "Neutral", f"你说：{user_text}"
 
-            audio_output_path = await generate_audio_reply(response_text, voice=self._current_voice()) if TTS_AVAILABLE else None
+            current_voice_code = self._current_voice()
+            current_voice_label = self._voice_code_to_choice(current_voice_code)
+            audio_output_path = await generate_audio_reply(response_text, voice=current_voice_code) if TTS_AVAILABLE else None
 
             if self.current_session_id:
                 db_manager.add_dialogue_turn(self.current_session_id, user_text, response_text, visual_decision, self.visual_confidence, audio_emo, audio_conf, llm_emotion)
@@ -761,7 +763,7 @@ class SystemInterface:
             if len(self.system_logs) > 50:
                 self.system_logs = self.system_logs[-50:]
 
-            self._log_user_event("dialogue", f"完成一次多模态对话。文本='{user_text[:30]}'，视觉={visual_decision}，音频={audio_emo}，最终={llm_emotion}，音色={self._current_voice()}", self.current_session_id)
+            self._log_user_event("dialogue", f"完成一次多模态对话。文本='{user_text[:30]}'，视觉={visual_decision}，音频={audio_emo}，最终={llm_emotion}，音色={current_voice_label}", self.current_session_id)
             return self.chat_history, user_text, audio_output_path, fusion_text, "\n".join(self.system_logs[-10:]), "多模态情感计算完成", self._get_gpu_mem()
         finally:
             self.is_asr_processing = False
