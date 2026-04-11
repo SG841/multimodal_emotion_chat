@@ -34,7 +34,8 @@ def init_db():
 
     cursor.execute(
         """CREATE TABLE IF NOT EXISTS user_profiles (
-        user_id INTEGER PRIMARY KEY,
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL UNIQUE,
         nickname TEXT,
         bio TEXT DEFAULT '',
         preferred_tts_voice TEXT DEFAULT 'zh-CN-XiaoxiaoNeural',
@@ -65,7 +66,8 @@ def init_db():
 
     cursor.execute(
         """CREATE TABLE IF NOT EXISTS multimodal_features (
-        message_id INTEGER PRIMARY KEY,
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        message_id INTEGER NOT NULL UNIQUE,
         vision_emotion TEXT,
         vision_confidence REAL,
         audio_emotion TEXT,
@@ -98,6 +100,49 @@ def init_db():
         cursor.execute("ALTER TABLE user_profiles ADD COLUMN bio TEXT DEFAULT ''")
     if "preferred_tts_voice" not in profile_columns:
         cursor.execute("ALTER TABLE user_profiles ADD COLUMN preferred_tts_voice TEXT DEFAULT 'zh-CN-XiaoxiaoNeural'")
+
+    profile_columns = [row["name"] for row in cursor.execute("PRAGMA table_info(user_profiles)").fetchall()]
+    if "id" not in profile_columns:
+        cursor.execute("ALTER TABLE user_profiles RENAME TO user_profiles_old")
+        cursor.execute(
+            """CREATE TABLE user_profiles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL UNIQUE,
+            nickname TEXT,
+            bio TEXT DEFAULT '',
+            preferred_tts_voice TEXT DEFAULT 'zh-CN-XiaoxiaoNeural',
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        )"""
+        )
+        cursor.execute(
+            """INSERT INTO user_profiles (user_id, nickname, bio, preferred_tts_voice)
+            SELECT user_id, nickname, COALESCE(bio, ''), COALESCE(preferred_tts_voice, 'zh-CN-XiaoxiaoNeural')
+            FROM user_profiles_old"""
+        )
+        cursor.execute("DROP TABLE user_profiles_old")
+
+    feature_columns = [row["name"] for row in cursor.execute("PRAGMA table_info(multimodal_features)").fetchall()]
+    if "id" not in feature_columns:
+        cursor.execute("ALTER TABLE multimodal_features RENAME TO multimodal_features_old")
+        cursor.execute(
+            """CREATE TABLE multimodal_features (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id INTEGER NOT NULL UNIQUE,
+            vision_emotion TEXT,
+            vision_confidence REAL,
+            audio_emotion TEXT,
+            audio_confidence REAL,
+            llm_decision TEXT,
+            FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
+        )"""
+        )
+        cursor.execute(
+            """INSERT INTO multimodal_features
+            (message_id, vision_emotion, vision_confidence, audio_emotion, audio_confidence, llm_decision)
+            SELECT message_id, vision_emotion, vision_confidence, audio_emotion, audio_confidence, llm_decision
+            FROM multimodal_features_old"""
+        )
+        cursor.execute("DROP TABLE multimodal_features_old")
 
     metric_columns = [row["name"] for row in cursor.execute("PRAGMA table_info(system_metrics)").fetchall()]
     if "user_id" not in metric_columns:
