@@ -12,6 +12,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from config import ADMIN_INVITE_CODE
 from utils import db_manager
+from utils.performance_logger import record_dialogue_performance
 
 DEFAULT_USER_ACTION = "请选择功能"
 USER_ACTIONS = ["个性化设置", "修改密码", "退出账号"]
@@ -719,30 +720,54 @@ class SystemInterface:
         if not audio_path:
             return self.chat_history, current_text, None, "等待语音输入...", "\n".join(self.system_logs[-10:]), "请先录音", self._get_gpu_mem()
 
+        total_start = time.perf_counter()
+        timings = {
+            "asr_s": 0.0,
+            "audio_emotion_s": 0.0,
+            "visual_decision_s": 0.0,
+            "reply_generation_s": 0.0,
+            "tts_s": 0.0,
+            "database_s": 0.0,
+        }
+        performance_csv = None
+
         try:
             self.is_asr_processing = True
             self.is_recording = False
 
+            step_start = time.perf_counter()
             user_text = await asyncio.to_thread(transcribe_audio, audio_path) if AUDIO_AVAILABLE else "[音频模块未加载]"
-            audio_emo, audio_conf, _ = await asyncio.to_thread(predict_audio_emotion, audio_path) if AUDIO_AVAILABLE else ("Neutral", 0.0, {})
+            timings["asr_s"] = time.perf_counter() - step_start
 
+            step_start = time.perf_counter()
+            audio_emo, audio_conf, _ = await asyncio.to_thread(predict_audio_emotion, audio_path) if AUDIO_AVAILABLE else ("Neutral", 0.0, {})
+            timings["audio_emotion_s"] = time.perf_counter() - step_start
+
+            step_start = time.perf_counter()
+            visual_frame_count = len(self.recording_emotion_buffer)
             if self.recording_emotion_buffer:
                 visual_decision = collections.Counter(self.recording_emotion_buffer).most_common(1)[0][0]
-                fusion_info = f"融合成功：提取录音期间 {len(self.recording_emotion_buffer)} 帧表情进行综合过滤，主要情绪：{visual_decision}"
+                fusion_info = f"融合成功：提取录音期间 {visual_frame_count} 帧表情进行综合过滤，主要情绪：{visual_decision}"
             else:
                 visual_decision = self.current_emotion
                 fusion_info = "录音期间未捕获到有效视频特征，采用当前视觉情绪作为参考。"
             self.recording_emotion_buffer = []
+            timings["visual_decision_s"] = time.perf_counter() - step_start
 
+            step_start = time.perf_counter()
             if LLM_AVAILABLE:
                 llm_emotion, response_text = await asyncio.to_thread(generate_empathetic_response, user_text, visual_decision, audio_emo, visual_decision, self.chat_history)
             else:
                 llm_emotion, response_text = "Neutral", f"你说：{user_text}"
+            timings["reply_generation_s"] = time.perf_counter() - step_start
 
             current_voice_code = self._current_voice()
             current_voice_label = self._voice_code_to_choice(current_voice_code)
+            step_start = time.perf_counter()
             audio_output_path = await generate_audio_reply(response_text, voice=current_voice_code) if TTS_AVAILABLE else None
+            timings["tts_s"] = time.perf_counter() - step_start
 
+            step_start = time.perf_counter()
             if self.current_session_id:
                 db_manager.add_dialogue_turn(self.current_session_id, user_text, response_text, visual_decision, self.visual_confidence, audio_emo, audio_conf, llm_emotion)
                 self.chat_history = db_manager.get_session_messages(self.current_session_id)
@@ -751,6 +776,21 @@ class SystemInterface:
                     {"role": "user", "content": user_text},
                     {"role": "assistant", "content": response_text},
                 ]
+            timings["database_s"] = time.perf_counter() - step_start
+
+            total_s = time.perf_counter() - total_start
+            performance_csv = record_dialogue_performance({
+                "user_id": self.current_user_id or "",
+                "session_id": self.current_session_id or "",
+                "audio_file": os.path.basename(str(audio_path)),
+                "recognized_text_len": len(user_text),
+                "visual_frame_count": visual_frame_count,
+                "visual_emotion": visual_decision,
+                "audio_emotion": audio_emo,
+                "llm_emotion": llm_emotion,
+                "total_s": total_s,
+                **timings,
+            })
 
             fusion_text = f"多模态情感分析结果：\n视觉判定基调: {visual_decision}\n音频情感检测: {audio_emo}\n大语言模型最终评估: {llm_emotion}"
             self.system_logs.extend([
@@ -759,6 +799,7 @@ class SystemInterface:
                 f"[{time.strftime('%H:%M:%S')}] 音频情感提取: {audio_emo}",
                 fusion_info,
                 f"[{time.strftime('%H:%M:%S')}] 模型最终判定: {llm_emotion}",
+                f"[{time.strftime('%H:%M:%S')}] 性能记录已保存: {performance_csv}",
             ])
             if len(self.system_logs) > 50:
                 self.system_logs = self.system_logs[-50:]

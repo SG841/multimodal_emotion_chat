@@ -24,6 +24,7 @@ from config import (
     update_visual_emotion,
     record_inference_time
 )
+from utils.performance_logger import record_vision_performance
 
 
 class VisionEmotionDetector:
@@ -203,6 +204,15 @@ class VisionEmotionDetector:
             # 记录推理耗时（使用更精确的 perf_counter 计时）
             inference_time = (t4 - start_total) * 1000
             record_inference_time("vision", inference_time)
+            record_vision_performance({
+                "emotion": emotion,
+                "confidence": confidence,
+                "transfer_s": t1 - t0,
+                "preprocess_s": t2 - t1,
+                "inference_s": t3 - t2,
+                "postprocess_s": t4 - t3,
+                "total_s": t4 - start_total,
+            })
 
             return emotion, confidence, emotion_probs
 
