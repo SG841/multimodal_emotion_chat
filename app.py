@@ -72,14 +72,17 @@ class SystemInterface:
 
         self.current_emotion = "Neutral"
         self.visual_confidence = 0.0
+        self.last_emotion_probs = {}
+
         self.chat_history = []
         self.system_logs = []
+
         self._frame_count_internal = 0
-        self.last_emotion_probs = {}
 
         self.is_recording = False
         self.is_asr_processing = False
         self.recording_emotion_buffer = []
+
         self.last_proc_time = 0
 
         self.create_interface()
@@ -226,32 +229,6 @@ class SystemInterface:
                         gr.Markdown("---")
                         self.btn_export = gr.Button("导出聊天记录")
                         self.export_file = gr.File(label="下载文件", interactive=False)
-
-                        with gr.Column(visible=False) as self.user_profile_panel:
-                            gr.Markdown("### 个性化设置")
-                            self.user_profile_username = gr.Textbox(label="当前用户名", interactive=False)
-                            self.user_nickname = gr.Textbox(label="昵称")
-                            self.user_bio = gr.Textbox(label="个人资料", lines=4, placeholder="介绍一下自己或写下你的偏好")
-                            self.user_voice = gr.Dropdown(TTS_VOICE_OPTIONS, label="偏好音色", value="标准普通话", interactive=True)
-                            gr.Markdown("音色说明：当前支持标准普通话、东北普通话、粤语、陕西话四种音色。")
-                            self.user_voice_preview_btn = gr.Button("试听当前音色", variant="secondary")
-                            self.user_voice_preview_audio = gr.Audio(label="音色试听", interactive=False, autoplay=True)
-                            self.user_profile_save_btn = gr.Button("保存个性化设置", variant="secondary")
-                            self.user_profile_msg = gr.Markdown("")
-
-                        with gr.Column(visible=False) as self.user_password_panel:
-                            gr.Markdown("### 修改密码")
-                            self.user_old_password = gr.Textbox(label="原密码", type="password")
-                            self.user_new_password = gr.Textbox(label="新密码", type="password")
-                            self.user_confirm_password = gr.Textbox(label="确认新密码", type="password")
-                            self.user_change_pwd_btn = gr.Button("修改我的密码", variant="secondary")
-                            self.user_password_msg = gr.Markdown("")
-
-                        with gr.Column(visible=False) as self.user_logout_panel:
-                            gr.Markdown("### 退出账号")
-                            gr.Markdown("点击下方按钮退出当前账号并返回登录界面。")
-                            self.btn_user_logout = gr.Button("退出账号", variant="stop")
-                            self.user_logout_msg = gr.Markdown("")
 
                     with gr.Column(scale=3):
                         gr.Markdown("### 视觉感知区")
