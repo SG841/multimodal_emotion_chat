@@ -31,22 +31,8 @@ _emotion_model_config = {
     "device": "cuda"
 }
 
-# emotion2vec原始标签
-EMOTION2VEC_LABELS = {
-    0: "Angry",
-    1: "Disgusted",
-    2: "Fear",
-    3: "Happy",
-    4: "Neutral",
-    5: "Other",
-    6: "Sad",
-    7: "Surprise",
-    8: "Unknown"
-}
-
-# 项目需要预测的情绪编号
-TARGET_EMOTION_IDS = [0, 2, 3, 4, 6, 7]  # angry, fearful, happy, neutral, sad, surprised
-
+# 项目只保留并输出这六类语音情绪
+TARGET_EMOTIONS = ["Angry", "Fear", "Happy", "Neutral", "Sad", "Surprise"]
 
 def _get_model() -> WhisperModel:
     """
@@ -184,7 +170,7 @@ def predict_audio_emotion(audio_path: str) -> Tuple[str, float, Dict[str, float]
         result = model.generate(
             input=audio_path,
             granularity="utterance",
-            extract_embedding=False
+            extract_embedding=False   # 不提取中间向量，只需要情绪结果
         )
 
         # 解析结果（根据emotion2vec的输出格式）
@@ -219,14 +205,14 @@ def predict_audio_emotion(audio_path: str) -> Tuple[str, float, Dict[str, float]
                 for label, score in zip(labels, scores):
                     mapped_emotion = emotion_label_map.get(label)
                     # 只保留目标情绪
-                    if mapped_emotion in ["Angry", "Fear", "Happy", "Neutral", "Sad", "Surprise"]:
+                    if mapped_emotion in TARGET_EMOTIONS:
                         target_probs_raw[mapped_emotion] = float(score)
 
                 # 如果没有目标情绪概率，使用默认值
                 total_raw_prob = sum(target_probs_raw.values())
                 if total_raw_prob <= 0:
                     print("⚠️  emotion2vec 未预测到目标情绪，使用默认值")
-                    return "Neutral", 0.0, {emo: 0.0 for emo in ["Happy", "Sad", "Angry", "Neutral", "Surprise", "Fear"]}
+                    return "Neutral", 0.0, {emo: 0.0 for emo in TARGET_EMOTIONS}
 
                 # 归一化：使六个目标情绪的概率之和为1
                 target_probs_normalized = {
@@ -249,10 +235,10 @@ def predict_audio_emotion(audio_path: str) -> Tuple[str, float, Dict[str, float]
                 return emotion_label, confidence, target_probs_normalized
             else:
                 print(f"⚠️  emotion2vec 输出格式异常: {pred}")
-                return "Neutral", 0.0, {emo: 0.0 for emo in ["Happy", "Sad", "Angry", "Neutral", "Surprise", "Fear"]}
+                return "Neutral", 0.0, {emo: 0.0 for emo in TARGET_EMOTIONS}
         else:
             print("⚠️  emotion2vec 返回空结果")
-            return "Neutral", 0.0, {emo: 0.0 for emo in ["Happy", "Sad", "Angry", "Neutral", "Surprise", "Fear"]}
+            return "Neutral", 0.0, {emo: 0.0 for emo in TARGET_EMOTIONS}
 
     except Exception as e:
         print(f"❌ 情感识别失败: {e}")

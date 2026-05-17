@@ -261,8 +261,7 @@ class SystemInterface:
                         self.fusion_display = gr.Textbox(label="多模态参考信息", value="等待数据...", interactive=False, lines=4)
                     with gr.Column(scale=2):
                         self.log_display = gr.Textbox(label="系统运行日志", value="系统初始化完成...", interactive=False, lines=8, max_lines=10, autoscroll=True)
-                        with gr.Row():
-                            self.gpu_memory = gr.Textbox(label="GPU 显存占用", value="-- MB", interactive=False)
+                        self.gpu_memory = gr.Textbox(label="GPU 显存占用", value="-- MB", interactive=False)
 
             with gr.Column(visible=False) as self.user_profile_page:
                 with gr.Row():
@@ -349,7 +348,7 @@ class SystemInterface:
                 button_text = "管理员登录"
                 helper_text = ""
             else:
-                button_text = "安全登录"
+                button_text = "用户登录"
                 helper_text = ""
             return gr.update(visible=need_invite, value=""), gr.update(value=button_text), helper_text
 
@@ -733,7 +732,7 @@ class SystemInterface:
 
             step_start = time.perf_counter()
             if LLM_AVAILABLE:
-                llm_emotion, response_text = await asyncio.to_thread(generate_empathetic_response, user_text, visual_decision, audio_emo, visual_decision, self.chat_history)
+                llm_emotion, response_text = await asyncio.to_thread(generate_empathetic_response, user_text, visual_decision, audio_emo, self.chat_history)
             else:
                 llm_emotion, response_text = "Neutral", f"你说：{user_text}"
             timings["reply_generation_s"] = time.perf_counter() - step_start

@@ -7,7 +7,7 @@ import json  # 新增 json 导入
 
 # 导入配置文件
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import LLM_MODEL, LLM_MAX_LENGTH, LLM_TEMPERATURE
+from config import LLM_MODEL
 
 _model = None
 _tokenizer = None
@@ -31,7 +31,7 @@ def _get_llm_model():
         print(f"✅ [LLM模块] 模型加载完成，运行在 {_model.device}")
     return _model, _tokenizer
 
-def generate_empathetic_response(user_text: str, visual_emotion: str, audio_emotion: str, final_emotion: str, chat_history: list) -> tuple:
+def generate_empathetic_response(user_text: str, visual_emotion: str, audio_emotion: str, chat_history: list) -> tuple:
     """
     结合多模态情感生成共情回复，使用前缀引导强制 JSON 输出
     """
@@ -49,7 +49,7 @@ def generate_empathetic_response(user_text: str, visual_emotion: str, audio_emot
         messages.append(msg)
 
     current_input = (
-        f"（后台参考数据：视觉检测为 {visual_emotion}，语音情感为 {audio_emotion}，系统初步判定为 {final_emotion}。）\n\n"
+        f"（后台参考数据：视觉检测为 {visual_emotion}，语音情感为 {audio_emotion}。）\n\n"
         f"用户说：{user_text}"
     )
     messages.append({"role": "user", "content": current_input})
@@ -61,7 +61,6 @@ def generate_empathetic_response(user_text: str, visual_emotion: str, audio_emot
         add_generation_prompt=True
     )
 
-    # 【终极必杀技：物理外挂前缀引导】
     # 我们直接帮模型打出左大括号和第一个键名，它就绝对不可能再输出 Thinking Process 了！
     force_prefix = '{\n    "emotion": "'
     text += force_prefix

@@ -1,26 +1,85 @@
-Multimodal_Emotion_Chat/
-├── .vscode/                  # 编辑器配置文件 (存放 Python 解析器路径、调试配置等)
-│   └── settings.json
-├── .gitignore                # Git 忽略文件 (防止把几十G的模型和缓存推送到远程仓库)
-├── requirements.txt          # 核心依赖包列表 (方便在 AutoDL 部署)
-├── README.md                 # 项目说明文档 (为了毕设答辩和后续整理)
-│
-├── app.py                    # 🟢 [模块 6] 交互界面：主程序入口，运行 Gradio
-├── config.py                 # 🟡 [模块 1/多线程调度] 全局配置文件：定义 GLOBAL_STATE 共享内存字典和模型路径
-│
-├── modules/                  # 核心算法模块文件夹
+毕设代码/
+├── .gitignore
+│   └── Git 忽略规则文件，用于排除缓存、临时文件、数据库运行文件、模型文件等不需要提交的内容。
+├── README.md
+│   └── 项目说明文件，目前内容为空，可后续补充运行方式、模型准备方式和部署说明。
+├── requirements.txt
+│   └── 项目依赖清单，包含 Gradio、PyTorch、Transformers、faster-whisper、FunASR、edge-tts、SQLite 相关依赖和监控依赖等。
+├── config.py
+│   └── 全局配置与共享状态文件。
+│       包含视觉模型、ASR 模型、SER 模型、LLM 模型、TTS 音色、管理员邀请码、置信度阈值等配置；
+│       同时维护系统运行时的全局情绪状态和推理耗时缓存。
+├── app.py
+│   └── 系统主入口与 Gradio 前端界面。
+│       负责用户登录注册、普通用户对话界面、管理员后台、摄像头视觉识别流、语音输入处理、
+│       多模态对话流程编排、历史会话加载、聊天记录导出、个人资料设置、音色试听、密码修改、
+│       用户管理、运行日志展示和 GPU 显存状态展示。
+├── modules/
 │   ├── __init__.py
-│   ├── vision.py             # 👁️ [模块 1] 视觉感知：加载 ViT，处理摄像头视频流，写入全局状态
-│   ├── audio.py              # 👂 [模块 2] 听觉感知：加载 Whisper 和 Emotion2Vec，处理录音文件
-│   ├── fusion.py             # 🧠 [模块 3] 融合决策：读取视听特征，执行“基于置信度的规则融合”
-│   ├── llm.py                # 🗣️ [模块 4] 对话生成：加载 Qwen3.5-9B（BF16 / FP16 半精度（无损全血版）），拼接 Prompt 并生成文本
-│   └── tts.py                # 👄 [模块 5] 语音合成：调用 Edge-TTS，将文本转为 .mp3
-│
-├── utils/                    # 工具类文件夹
+│   │   └── Python 包初始化文件。
+│   ├── vision.py
+│   │   └── 视觉情感识别模块。
+│   │       使用 Transformers 加载本地图像情绪分类模型，接收摄像头图像帧，
+│   │       输出视觉情绪、置信度和情绪概率分布；
+│   │       支持 CUDA、FP16 推理、GPU 预处理、跳帧控制和视觉性能日志记录。
+│   ├── audio.py
+│   │   └── 听觉感知模块。
+│   │       使用 faster-whisper 完成中文语音转写；
+│   │       使用 emotion2vec 完成语音情感识别，并将结果映射为 Angry、Fear、Happy、
+│   │       Neutral、Sad、Surprise 六类目标情绪。
+│   ├── llm.py
+│   │   └── 大语言模型共情回复模块。
+│   │       使用 Transformers 加载本地 Qwen 模型，将用户文本、视觉情绪、音频情绪、
+│   │       历史对话和系统初步判断组织为 Prompt；
+│   │       生成 JSON 格式结果，并解析出最终情绪判断和中文共情回复。
+│   └── tts.py
+│       └── 语音合成模块。
+│           使用 edge-tts 将系统回复文本合成为 mp3 文件，输出到 assets/output_tts 目录；
+│           支持按用户个人设置选择不同中文音色。
+├── utils/
 │   ├── __init__.py
-│   └── monitor.py            # 📊 [模块 7] 状态监控：记录耗时、显存占用、打印融合决策日志
-│
-└── assets/                   # 资源与缓存文件夹 (Git需忽略里面的文件)
-    ├── temp_audio/           # 存放前端录音生成的临时 .wav 文件
-    ├── output_tts/           # 存放 Edge-TTS 生成的临时 .mp3 回复文件
-    └── test_media/           # 存放用来离线测试的图片和音频片段
+│   │   └── Python 包初始化文件。
+│   ├── db_manager.py
+│   │   └── SQLite 数据库管理模块。
+│   │       负责初始化 users、user_profiles、sessions、messages、multimodal_features、
+│   │       system_metrics 等数据表；
+│   │       提供用户注册登录、密码修改、管理员重置密码、删除用户、会话创建、
+│   │       历史消息读取、聊天记录导出和系统日志写入等功能。
+│   ├── monitor.py
+│   │   └── 系统资源监控模块。
+│   │       使用 torch 与 nvidia-ml-py 读取 CUDA 和 GPU 显存状态，
+│   │       为用户界面和管理员后台提供服务器资源监控信息。
+│   └── performance_logger.py
+│       └── 性能日志记录模块。
+│           将视觉单帧推理耗时和完整对话流程耗时写入 CSV 文件，
+│           并自动生成平均耗时汇总文件，便于后续实验分析。
+├── assets/
+│   ├── __init__.py
+│   │   └── 资源目录初始化文件。
+│   ├── system_data.db
+│   │   └── SQLite 数据库文件，用于保存用户、会话、消息、多模态特征和系统运行日志。
+│   ├── system_data.db-journal
+│   │   └── SQLite 运行过程中生成的日志文件。
+│   ├── output_tts/
+│   │   └── 运行时自动创建的语音回复输出目录，用于保存 Edge-TTS 生成的 mp3 文件。
+│   ├── performance_results/
+│   │   ├── dialogue_performance.csv
+│   │   │   └── 完整对话流程性能记录，包含 ASR、音频情绪识别、视觉决策、
+│   │   │       回复生成、TTS、数据库写入和总耗时。
+│   │   ├── vision_performance.csv
+│   │   │   └── 视觉模块单帧性能记录，包含数据搬运、预处理、推理、后处理和总耗时。
+│   │   └── performance_summary.csv
+│   │       └── 性能汇总文件，自动统计视觉推理和完整对话流程的平均耗时。
+│   └── temp_audio/
+│       └── 运行时可能产生的临时录音文件目录，由前端音频输入和部署环境按需生成。
+└── 设计文档/
+    ├── 毕设主要内容
+    │   └── 对毕业设计课题目标、系统模块、运行流程和项目特点的总体说明。
+    └── 项目目录树
+        └── 对当前项目文件结构和各文件职责的说明。
+
+说明：
+
+1. 当前代码中不存在独立的 modules/fusion.py 文件，多模态融合与决策流程主要在 app.py 的 process_dialogue 方法中完成，LLM 语义融合与回复生成由 modules/llm.py 完成。
+2. 模型文件未包含在当前代码目录树中，实际运行时需要按照 config.py 和各模块中的路径配置准备视觉模型、Whisper 模型、emotion2vec 模型和 Qwen 模型。
+3. assets/output_tts、assets/temp_audio 等目录属于运行时目录，可能在程序运行过程中自动创建或由部署环境生成。

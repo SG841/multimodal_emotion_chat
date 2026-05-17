@@ -13,14 +13,10 @@ SER_MODEL = "/root/multimodal_emotion_chat/models/emotion2vec"
 AUDIO_SAMPLE_RATE = 16000
 
 LLM_MODEL = "/root/multimodal_emotion_chat/models/qwen3.5-9b"
-LLM_MAX_LENGTH = 512
-LLM_TEMPERATURE = 0.95
 
 TTS_VOICE = "zh-CN-XiaoxiaoNeural"
 ADMIN_INVITE_CODE = "GRAD-ADMIN-2026"
 
-VISUAL_CONFIDENCE_THRESHOLD = 0.85
-AUDIO_CONFIDENCE_THRESHOLD = 0.8
 
 STATE = {
     "visual_emotion": "Neutral",

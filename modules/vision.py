@@ -220,31 +220,6 @@ class VisionEmotionDetector:
             print(f"[视觉模块] 推理错误: {e}")
             return self.last_emotion, self.last_confidence, self.last_emotion_probs
 
-    def get_top_emotions(self, top_k: int = 3) -> list:
-        """
-        获取概率最高的前K个情绪
-
-        Args:
-            top_k: 返回的个数
-
-        Returns:
-            [(emotion, confidence), ...] 列表
-        """
-        sorted_emotions = sorted(
-            self.last_emotion_probs.items(),
-            key=lambda x: x[1],
-            reverse=True
-        )
-        return sorted_emotions[:top_k]
-
-    def reset(self):
-        """重置状态"""
-        self.frame_count = 0
-        self.last_emotion = "Neutral"
-        self.last_confidence = 0.0
-        self.last_emotion_probs = {}
-
-
 # 创建全局检测器实例（懒加载）
 _detector = None
 
