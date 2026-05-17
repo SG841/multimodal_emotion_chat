@@ -61,7 +61,7 @@ def generate_empathetic_response(user_text: str, visual_emotion: str, audio_emot
         add_generation_prompt=True
     )
 
-    # 我们直接帮模型打出左大括号和第一个键名，它就绝对不可能再输出 Thinking Process 了！
+    # 我们直接给模型打出左大括号和第一个键名，强制它从这里开始生成 JSON 内容
     force_prefix = '{\n    "emotion": "'
     text += force_prefix
 

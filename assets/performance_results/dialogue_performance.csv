@@ -1,0 +1,11 @@
+﻿timestamp,user_id,session_id,audio_file,recognized_text_len,visual_frame_count,visual_emotion,audio_emotion,llm_emotion,asr_s,audio_emotion_s,visual_decision_s,reply_generation_s,tts_s,database_s,total_s
+2026-05-05 20:39:36,2,39,audio.wav,19,123,neutral,Happy,Happy,0.5744,0.1474,0.0000,3.5409,2.4158,0.0082,6.6867
+2026-05-05 20:40:03,2,39,audio.wav,29,15,neutral,Neutral,Sad,0.5110,0.0377,0.0000,5.0749,2.2745,0.8390,8.7371
+2026-05-05 20:40:47,2,39,audio.wav,32,20,neutral,Neutral,Sad,0.5096,0.0472,0.0000,7.3009,6.3689,0.0083,14.2350
+2026-05-05 21:03:19,2,40,audio.wav,19,13,neutral,Neutral,Neutral,0.5556,0.1408,0.0000,3.7488,3.3167,0.1823,7.9442
+2026-05-05 21:03:54,2,40,audio.wav,30,12,neutral,Neutral,Fear,0.5572,0.0331,0.0000,7.5400,4.5533,0.1466,12.8302
+2026-05-05 21:05:01,2,40,audio.wav,23,13,neutral,Neutral,Fear,0.5367,0.0350,0.0000,11.9091,4.3622,0.0094,16.8524
+2026-05-05 21:06:01,2,40,audio.wav,22,13,neutral,Neutral,Neutral,0.5304,0.0363,0.0000,11.9838,6.4385,0.0097,18.9988
+2026-05-05 21:06:55,2,40,audio.wav,10,8,neutral,Sad,Sad,0.3668,0.0347,0.0000,7.8550,9.1511,0.0083,17.4159
+2026-05-05 21:07:48,2,40,audio.wav,13,8,neutral,Neutral,Neutral,0.4459,0.0335,0.0000,9.2667,4.4951,0.0073,14.2484
+2026-05-05 21:08:18,2,40,audio.wav,13,9,happy,Surprise,Happy,0.3949,0.0361,0.0000,8.3874,3.1442,0.0076,11.9702

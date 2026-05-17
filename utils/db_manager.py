@@ -12,7 +12,7 @@ DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "sy
 
 def get_connection():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
+    conn.row_factory = sqlite3.Row   # 让查询结果可以像字典一样访问
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
@@ -269,13 +269,13 @@ def add_dialogue_turn(session_id, user_text, sys_text, v_emo, v_conf, a_emo, a_c
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("INSERT INTO messages (session_id, role, content) VALUES (?, 'user', ?)", (session_id, user_text))
+    user_msg_id = cur.lastrowid
     cur.execute("INSERT INTO messages (session_id, role, content) VALUES (?, 'assistant', ?)", (session_id, sys_text))
-    sys_msg_id = cur.lastrowid
     cur.execute(
         """INSERT INTO multimodal_features
         (message_id, vision_emotion, vision_confidence, audio_emotion, audio_confidence, llm_decision)
         VALUES (?, ?, ?, ?, ?, ?)""",
-        (sys_msg_id, v_emo, v_conf, a_emo, a_conf, llm_emo),
+        (user_msg_id, v_emo, v_conf, a_emo, a_conf, llm_emo),
     )
     conn.commit()
     conn.close()

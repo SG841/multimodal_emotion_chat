@@ -1,0 +1,3 @@
+﻿updated_at,record_type,sample_count,avg_asr_s,avg_audio_emotion_s,avg_visual_decision_s,avg_reply_generation_s,avg_tts_s,avg_database_s,avg_total_s,avg_transfer_s,avg_preprocess_s,avg_inference_s,avg_postprocess_s
+2026-05-05 21:08:42,dialogue,10,0.4982,0.0582,0.0000,7.6608,4.6520,0.1227,12.9919,,,,
+2026-05-05 21:08:42,vision,759,,,,,,,0.0064,0.0003,0.0006,0.0052,0.0003
